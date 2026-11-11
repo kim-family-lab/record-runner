@@ -103,6 +103,12 @@ section{width:100%}
 .bank{margin:0;font-size:15px;color:var(--gold);font-variant-numeric:tabular-nums}
 #over{justify-content:safe center}
 #shop{background:rgba(23,19,31,.97)}
+#duelScr{background:rgba(23,19,31,.97);justify-content:safe center}
+.joinrow{display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap}
+#roomCode{font:inherit;font-size:24px;width:150px;text-align:center;letter-spacing:6px;color:var(--ink);background:var(--panel);border:2px solid var(--line);border-radius:12px;padding:8px}
+#roomCode:focus-visible{outline:3px solid var(--ice);outline-offset:2px}
+#duelErr{color:#ff8a6b;min-height:1.2em}
+.or{margin:0;color:var(--muted);font-size:13px}
 .shoplist{display:flex;flex-direction:column;gap:6px;width:100%}
 .srow{display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:8px;align-items:center;background:var(--panel);border:2px solid var(--line);border-radius:12px;padding:8px 10px;text-align:left}
 .srow .se{font-size:26px;text-align:center}
@@ -167,12 +173,13 @@ section{width:100%}
       </section>
       <button class="go" id="startBtn">출발!</button>
       <button class="ghost" id="shopBtn">🛒 상점</button>
+      <button class="ghost" id="duelBtn">⚔️ 2인 대결</button>
       <section>
         <h2 id="boardTitle">가족 순위</h2>
         <div class="board" id="board"></div>
         <p class="note" id="boardNote"></p>
       </section>
-      <p class="help">PC: ← → 이동, ↑·스페이스 점프, 아이템 1~8<br>폰: 누른 채 좌우로 끌기, 위로 휙 쓸면 점프, 아이템은 버튼</p>
+      <p class="help">PC: ← → 이동, ↑·스페이스 점프, 아이템 1~8 · 길 위의 ❓ 상자를 주우면 아이템이 바로 나와요<br>폰: 누른 채 좌우로 끌기, 위로 휙 쓸면 점프, 아이템은 버튼</p>
       <p class="bank" id="bank"></p>
     </div>
 
@@ -191,6 +198,27 @@ section{width:100%}
         <button class="go" id="againBtn">다시 달리기</button>
         <button class="ghost" id="menuBtn">친구·맵 바꾸기</button>
       </div>
+    </div>
+
+    <div id="duelScr" class="screen" hidden>
+      <p class="tag rec">⚔️ 2인 대결</p>
+      <p class="sub" id="duelInfo"></p>
+      <div id="duelHome" class="btns">
+        <button class="go" id="roomMake">방 만들기</button>
+        <p class="or">또는 받은 방 번호로</p>
+        <div class="joinrow">
+          <input id="roomCode" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="0000" aria-label="방 번호 4자리" autocomplete="off">
+          <button class="ghost" id="roomJoin">들어가기</button>
+        </div>
+      </div>
+      <div id="duelWait" hidden>
+        <p class="note">방 번호</p>
+        <div class="big" id="roomShow">----</div>
+        <p class="note" id="waitMsg"></p>
+      </div>
+      <p class="note" id="duelErr"></p>
+      <p class="bank" id="duelRecord"></p>
+      <button class="ghost" id="duelClose">돌아가기</button>
     </div>
 
     <div id="shop" class="screen" hidden>
@@ -277,13 +305,49 @@ const PL = Object.fromEntries(PLAYERS.map(P => [P.id, P]));
 let me = store.get('rk-me', null); if(!PL[me]) me = null;
 let scores = store.get('rk-scores', {});           // "n1-volcano-horse" -> {p,map,ch,dist,at}
 let dbRef = null, dbState = 'loading', openRow = null, synced = false;
-let wallet = store.get('rk-wallet', {}), inv = store.get('rk-inv', {});
-if(!wallet || typeof wallet !== 'object') wallet = {};
-if(!inv || typeof inv !== 'object') inv = {};
-function myWallet(){ return me ? Math.max(0, wallet[me] | 0) : 0; }
-function owned(id){ return me && inv[me] ? Math.max(0, inv[me][id] | 0) : 0; }
-function addWallet(n){ if(!me) return; wallet[me] = myWallet() + n; store.set('rk-wallet', wallet); }
-function addOwned(id, n){ if(!me) return; inv[me] = inv[me] || {}; inv[me][id] = owned(id) + n; store.set('rk-inv', inv); }
+/* 지갑·아이템: 공용 저장소(Firebase)에 있는 값 + 아직 못 올린 이 기기 몫(pending) */
+let remoteW = {};   // n1 -> { coins, inv:{...}, wins, losses }
+let pending = store.get('rk-pending', {});
+if(!pending || typeof pending !== 'object') pending = {};
+if(!store.get('rk-wallet-merged', false)){   // 예전 기기별 지갑을 한 번만 공용 지갑에 더하기
+  const ow = store.get('rk-wallet', {}) || {}, oi = store.get('rk-inv', {}) || {};
+  for(const P of PLAYERS){
+    const c = Math.max(0, ow[P.id] | 0), it = oi[P.id] || {};
+    if(!c && !Object.keys(it).length) continue;
+    const d = pending[P.id] = pending[P.id] || { coins:0, inv:{} };
+    d.coins = (d.coins | 0) + c;
+    for(const k in it) d.inv[k] = (d.inv[k] | 0) + Math.max(0, it[k] | 0);
+  }
+  store.set('rk-pending', pending); store.set('rk-wallet-merged', true);
+}
+function wOf(p){ const r = remoteW[p] || {}, d = pending[p] || {}; return Math.max(0, (r.coins | 0) + (d.coins | 0)); }
+function iOf(p, id){ const r = (remoteW[p] || {}).inv || {}, d = (pending[p] || {}).inv || {}; return Math.max(0, (r[id] | 0) + (d[id] | 0)); }
+function myWallet(){ return me ? wOf(me) : 0; }
+function owned(id){ return me ? iOf(me, id) : 0; }
+function addPending(p, coins, invDelta){
+  const d = pending[p] = pending[p] || { coins:0, inv:{} };
+  d.inv = d.inv || {};
+  d.coins = (d.coins | 0) + (coins | 0);
+  for(const k in invDelta || {}) d.inv[k] = (d.inv[k] | 0) + invDelta[k];
+  store.set('rk-pending', pending); flushWallet();
+}
+function addWallet(n){ if(me && n) addPending(me, n); }
+function addOwned(id, n){ if(me && n) addPending(me, 0, { [id]: n }); }
+function flushWallet(){
+  const fb = window.__fb; if(!fb || !fb.addWallet) return;
+  for(const p of Object.keys(pending)){
+    const d = pending[p]; if(!d) continue;
+    const inv = {}; for(const k in d.inv || {}) if(d.inv[k]) inv[k] = d.inv[k];
+    const coins = d.coins | 0;
+    delete pending[p]; store.set('rk-pending', pending);
+    if(!coins && !Object.keys(inv).length) continue;
+    fb.addWallet(p, coins, inv).catch(() => {   // 실패하면 다음 기회에 다시 올려요
+      const b = pending[p] = pending[p] || { coins:0, inv:{} }; b.inv = b.inv || {};
+      b.coins = (b.coins | 0) + coins; for(const k in inv) b.inv[k] = (b.inv[k] | 0) + inv[k];
+      store.set('rk-pending', pending);
+    });
+  }
+}
 function renderShop(){
   $('#shopWallet').textContent = `${PL[me].name}의 지갑 🪙 ${myWallet()}`;
   const box = $('#shopList'); box.innerHTML = '';
@@ -345,6 +409,13 @@ function initDb(){
       }
       if(mode === 'menu' && $('#shop').hidden) buildMenu(); else renderBoards();
     }, () => { clearTimeout(timer); if(dbState === 'loading') dbState = 'local'; renderBoards(); });
+    fb.watchWallets(m => {
+      remoteW = m || {};
+      if(!$('#shop').hidden) renderShop();
+      else if(mode === 'menu' && $('#duelScr').hidden) buildMenu();
+      if(!$('#duelScr').hidden && me) $('#duelRecord').textContent = duelRecordText(me);
+    }, () => {});
+    flushWallet();
   };
   if(window.__fb) go(); else window.addEventListener('fb-ready', go, { once:true });
 }
@@ -375,7 +446,7 @@ function renderBoards(){
   const map = g ? g.mapId : sel.map;
   $('#boardTitle').textContent = `가족 순위 · ${MAPS[sel.map].name}`;
   renderBoard($('#board'), sel.map);
-  if(!$('#over').hidden) renderBoard($('#ovBoard'), map);
+  if(!$('#over').hidden && !lastDuel) renderBoard($('#ovBoard'), map);
   $('#boardNote').textContent = dbState === 'shared' ? '가족 모두의 기록이 함께 보여요 · 이름을 누르면 캐릭터별 기록'
     : dbState === 'loading' ? '가족 기록을 불러오는 중…'
     : '지금은 이 폰의 기록만 보여요 · 이름을 누르면 캐릭터별 기록';
@@ -438,6 +509,8 @@ function buildMenu(){
     b.onclick = () => { sel.map = id; store.set('rk-sel', sel); buildMenu(); };
     mb.appendChild(b);
   }
+  $('#duelBtn').disabled = !me || dbState !== 'shared';
+  $('#duelBtn').textContent = !me ? '⚔️ 2인 대결' : dbState === 'shared' ? '⚔️ 2인 대결' : '⚔️ 2인 대결 (인터넷 연결 필요)';
   $('#shopBtn').disabled = !me; $('#shopBtn').textContent = me ? `🛒 상점 · 지갑 🪙 ${myWallet()}` : '🛒 상점';
   $('#bank').textContent = '🪙 달리다 남은 코인은 지갑에 모여요 · 상점에서 미리 사 둘 수 있어요';
   renderBoards();
@@ -449,29 +522,36 @@ const keys = { left:false, right:false };
 const pointer = { down:false, x:0 };
 let attractD = 0;
 
-function startGame(){
+function startGame(duelOpts){
   if(!me) return;
+  const duel = duelOpts && duelOpts.code ? duelOpts : null;
+  if(!duel) lastDuel = false;
+  const mapId = duel && MAPS[duel.map] ? duel.map : sel.map;
   const C = CHARS[sel.ch];
-  const mine = bestOf(me, sel.map), ft = famTop(sel.map);
+  const mine = duel ? null : bestOf(me, mapId), ft = duel ? null : famTop(mapId);
   g = {
-    C, map:MAPS[sel.map], mapId:sel.map,
+    C, map:MAPS[mapId], mapId,
     t:0, d:0, speed:0, hp:C.hp, coins:0, coinsTotal:0,
     buys:Object.fromEntries(ITEMS.map(it => [it.id, 0])), fx:{ shield:0, magnet:0, boost:0, jet:0, pogo:0, glass:0, skate:0 }, barKey:'', glassWarned:false, mon:null, monCD:rnd(2, 12),
     jetWarned:false, wasJet:false, safeLand:false,
-    myBest: mine ? mine.dist : 0, brokeMine:false, chBest: (scores[keyOf(me, sel.map, sel.ch)] || {}).dist || 0,
+    myBest: mine ? mine.dist : 0, brokeMine:false, chBest: (scores[keyOf(me, mapId, sel.ch)] || {}).dist || 0,
     famBest: ft && ft.P.id !== me ? ft.b.dist : 0, famName: ft ? ft.P.name : '', famColor: ft ? ft.P.color : '#ffc93c', brokeFam:false,
-    meTop: !ft || ft.P.id === me, passes:0,
+    meTop: !duel && (!ft || ft.P.id === me), passes:0,
+    duel: duel ? { ...duel, oppD:0, oppX:0, oppCh:'boy', pushT:0, said:{}, wasAhead:null, finished:false, ended:false } : null,
+    rng: mulberry32(duel ? duel.seed : Math.floor(Math.random() * 1e9)), nextBox:0, stunT:0, countT: duel ? 3.6 : 0,
     p:{ x:0, vx:0, inv:0, y:0, vy:0, air:false }, jumpBuf:0, lastRiver:-99, riverHint:false, justRiver:false, hurtT:0, lostHeart:null,
     obs:[], coinList:[], parts:[], toasts:[],
     spawnT:1.0, coinT:0.6, shake:0,
-    rivals: RIVALS.map(r => ({ ...r, d:r.head, ahead:true }))
+    rivals: duel ? [] : RIVALS.map(r => ({ ...r, d:r.head, ahead:true }))
   };
+  g.nextBox = 110 + g.rng() * 30;   // 첫 아이템 상자
   camX = 0;
-  mode = 'play'; last = performance.now();
-  $('#menu').hidden = true; $('#over').hidden = true; $('#pause').hidden = true;
-  $('#pauseBtn').hidden = false;
+  mode = duel ? 'count' : 'play'; last = performance.now();
+  $('#menu').hidden = true; $('#over').hidden = true; $('#pause').hidden = true; $('#duelScr').hidden = true;
+  $('#pauseBtn').hidden = !!duel;
   buildItems(); $('#items').hidden = false;
-  toast('출발!');
+  $('#againBtn').textContent = '다시 달리기'; $('#menuBtn').textContent = '친구·맵 바꾸기';
+  if(!duel) toast('출발!');
 }
 function endGame(){
   mode = 'over'; $('#pauseBtn').hidden = true; $('#items').hidden = true;
@@ -528,11 +608,31 @@ function useItem(i){
     if(g.coins < cost){ toast(`코인 ${cost - g.coins}개 더 필요해요`, '#b9adc9'); return; }
     g.coins -= cost; g.buys[it.id]++;
   }
-  if(it.id === 'heart') g.hp++;
+  applyItem(it);
+  toast(`${it.e} ${it.name}!`, '#7fd8ff');
+}
+function applyItem(it){
+  if(it.id === 'heart') g.hp = Math.min(g.C.hp, g.hp + 1);
   else g.fx[it.id] = it.dur;
   if(it.id === 'jet') g.jetWarned = false;
   if(it.id === 'glass') g.glassWarned = false;
-  toast(`${it.e} ${it.name}!`, '#7fd8ff');
+}
+/* 아이템 상자: 숫자가 클수록 잘 나와요 */
+const BOX_W = { shield:6, magnet:6, boost:6, heart:3, skate:3, pogo:3, jet:1, glass:1 };
+function pickItem(r, skip){
+  const ids = Object.keys(BOX_W).filter(k => k !== skip);
+  let x = r() * ids.reduce((s, k) => s + BOX_W[k], 0);
+  for(const k of ids){ x -= BOX_W[k]; if(x < 0) return k; }
+  return ids[0];
+}
+function mulberry32(a){ return function(){ a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function openBox(o){
+  let id = o.item;
+  if(id === 'heart' && g.hp >= g.C.hp) id = pickItem(Math.random, 'heart');   // 하트가 가득하면 다른 아이템
+  const it = ITEMS.find(x => x.id === id); if(!it) return;
+  applyItem(it);
+  burst(o.x, 0.4, o.z, '#ffc93c', 16);
+  toast(`🎁 ${it.e} ${it.name}!`, '#ffc93c');
 }
 function syncItems(){
   const key = ITEMS.map(it => [canBuy(it) ? 1 : 0, price(it), owned(it.id), it.dur ? Math.ceil(g.fx[it.id] * (it.dur > 20 ? 2 : 10)) : 0].join(':')).join('|');
@@ -693,6 +793,13 @@ function land(){
 /* ===== 업데이트 ===== */
 function update(dt){
   const C = g.C, p = g.p;
+  if(g.stunT > 0){   // 대결에서 하트가 다 떨어지면 잠깐 쉬어요
+    g.stunT -= dt;
+    if(g.stunT <= 0){ g.hp = C.hp; p.inv = 1.5; toast('다시 출발!', '#7fd8ff'); }
+    for(const t of g.toasts) t.t -= dt;
+    g.toasts = g.toasts.filter(t => t.t > 0);
+    return;
+  }
   g.t += dt;
   const ramp = Math.min(2.1, 1 + 0.012 * g.t);
   for(const k in g.fx) g.fx[k] = Math.max(0, g.fx[k] - dt);
@@ -752,10 +859,18 @@ function update(dt){
   if(g.spawnT <= 0){ spawnObstacle(); g.spawnT = Math.max(0.32, 1.05 / ramp) * rnd(0.7, 1.3); if(g.justRiver){ g.spawnT += 0.9; g.justRiver = false; } }
   g.coinT -= dt;
   if(g.coinT <= 0){ spawnCoins(); g.coinT = rnd(1.6, 2.6); }
+  if(g.d + ZMAX >= g.nextBox){   // 아이템 상자 (대결에서는 두 사람에게 같은 자리, 같은 아이템)
+    g.obs.push({ type:'box', x:[-1, 0, 1][Math.floor(g.rng() * 3)], z:g.nextBox - g.d, item:pickItem(g.rng) });
+    g.nextBox += 110 + g.rng() * 40;
+  }
 
   const pr = C.r;
   for(const o of g.obs){
     o.z -= step;
+    if(o.type === 'box'){
+      if(!o.dead && Math.abs(o.z) < 0.45 && Math.abs(o.x - p.x) < 0.45 && (p.y < 0.8 || g.fx.jet > 0)){ o.dead = true; openBox(o); }
+      continue;
+    }
     if(o.type === 'spear' && !o.landed){
       o.y += o.vy * dt;
       if(o.y <= 0){ o.y = 0; o.landed = true; burst(o.x, 0.1, o.z, g.mapId === 'volcano' ? '#9c8b80' : '#ffffff', 8); g.shake = Math.max(g.shake, 0.1); }
@@ -777,7 +892,10 @@ function update(dt){
         g.hp--; p.inv = 1.3; g.shake = 0.35; g.hurtT = 0.45; g.lostHeart = { i:g.hp, t:0.6 };
         burst(p.x, 0.5, 0, '#ff5b33', 12);
         if(o.small || o.type === 'fire' || o.type === 'spear') o.dead = true;
-        if(g.hp <= 0){ endGame(); return; }
+        if(g.hp <= 0){
+          if(g.duel){ g.stunT = 3; toast('💫 하트가 다 떨어졌어요! 3초 쉬고 다시 출발', '#ff8a6b'); return; }
+          endGame(); return;
+        }
         toast(g.hp === 1 ? '하트 1개 남았어요!' : '아야!', '#ff8a6b');
       }
     }
@@ -962,6 +1080,18 @@ function drawObs(o){
 }
 function drawObs2(o){
   const t = performance.now() / 1000;
+  if(o.type === 'box'){
+    ctx.globalAlpha = fogA(o.z);
+    const bob = 0.35 + Math.sin(t * 3 + o.x) * 0.06;
+    shadow(o.x, o.z, 0.22, 0.25);
+    const q = proj(o.x, bob, o.z); if(!q) return;
+    const s = 0.42 * q.s;
+    ctx.save(); ctx.shadowColor = '#ffc93c'; ctx.shadowBlur = 16;
+    ctx.fillStyle = '#ffb627'; roundRect(q.x - s/2, q.y - s/2, s, s, s * 0.18); ctx.fill(); ctx.restore();
+    ctx.strokeStyle = '#fff3c4'; ctx.lineWidth = Math.max(1.5, s * 0.07); roundRect(q.x - s/2, q.y - s/2, s, s, s * 0.18); ctx.stroke();
+    text('?', q.x, q.y + s * 0.04, Math.max(10, s * 0.7) | 0, '#7a3d00', 'center');
+    return;
+  }
   ctx.globalAlpha = fogA(o.z) * (g.fx.glass > 0 ? (g.fx.glass < 3 && Math.floor(t * 6) % 2 === 0 ? 0.7 : 0.3) : 1);
   if(o.type === 'tiny'){
     shadow(o.x, o.z, 0.1, 0.15);
@@ -1128,6 +1258,15 @@ function drawGate(z, label, color, hgt){
   ctx.globalAlpha = 1;
 }
 
+function drawFinish(z){
+  ctx.save(); ctx.globalAlpha = fogA(z);
+  for(let r = 0; r < 2; r++) for(let i = 0; i < 8; i++){
+    const x0 = -RW + i * RW / 4;
+    quad(x0, x0 + RW / 4, z - 0.3 + r * 0.3, z + r * 0.3, (i + r) % 2 ? '#1b1b22' : '#ffffff', 0.012);
+  }
+  ctx.restore();
+  drawGate(z, `🏁 결승선 ${FINISH} m`, '#ffffff', 2.2);
+}
 function render(){
   const C = g ? g.C : CHARS[sel.ch];
   const mapId = g ? g.mapId : sel.map;
@@ -1152,6 +1291,12 @@ function render(){
       const x = r.lane + Math.sin(g.t * 1.1 + r.head) * 0.25;
       items.push({ z, f:() => drawRunner(r.e, x, z, 0.55, Math.abs(Math.sin(g.t * 10 + r.head)) * 0.06, r.name) });
     }
+  }
+  if(g.duel){
+    const D = g.duel, oz = D.oppD - g.d, P = PL[D.opp];
+    if(oz > -0.6 && oz < ZMAX) items.push({ z:oz, f:() => drawRunner(CHARS[D.oppCh].e, D.oppX, oz, 0.62, Math.abs(Math.sin(g.t * 10)) * 0.06, P ? P.name : '상대') });
+    const fz = FINISH - g.d;
+    if(fz > -0.5 && fz < ZMAX) items.push({ z:fz + 0.3, f:() => drawFinish(fz) });
   }
   if(g.myBest > 0 && !g.brokeMine){
     const z = g.myBest - g.d;
@@ -1238,15 +1383,23 @@ function render(){
   // 화면 정보
   chip(10, 10, 150, 58);
   text(`${Math.floor(g.d)} m`, 22, 32, 28, '#fbf4e6');
-  text(g.myBest > 0 ? (g.brokeMine ? '새 기록 달리는 중!' : `내 최고 ${fmtM(g.myBest)}`) : '첫 기록 도전!', 22, 56, 13, g.brokeMine ? '#ffc93c' : '#b9adc9');
+  if(g.duel){
+    const rem = Math.max(0, Math.ceil(FINISH - g.d));
+    text(rem <= 300 ? `결승선까지 ${rem} m` : `결승선 ${FINISH} m`, 22, 56, 13, rem <= 300 ? '#ffc93c' : '#b9adc9');
+  } else text(g.myBest > 0 ? (g.brokeMine ? '새 기록 달리는 중!' : `내 최고 ${fmtM(g.myBest)}`) : '첫 기록 도전!', 22, 56, 13, g.brokeMine ? '#ffc93c' : '#b9adc9');
   drawHearts();
   chip(W - 86, 58, 76, 28);
   text(`🪙 ${g.coins}`, W - 20, 72, 16, '#ffc93c', 'right');
-  const rk = rank();
+  const rk = g.duel ? (g.d >= g.duel.oppD ? 1 : 2) : rank();
   chip(W/2 - 34, 76, 68, 30);
   text(`${rk}등`, W/2, 92, 18, rk === 1 ? '#ffc93c' : '#fbf4e6', 'center');
   const nxt = g.rivals.filter(r => r.d > g.d).sort((a, b) => a.d - b.d)[0];
   if(nxt){ chip(W/2 - 70, 110, 140, 22); text(`${nxt.name}까지 ${Math.ceil(nxt.d - g.d)} m`, W/2, 121, 12, '#7fd8ff', 'center'); }
+  if(g.duel){
+    const D = g.duel, P = PL[D.opp], gap = Math.round(D.oppD - g.d), nm = P ? P.name : '상대';
+    chip(W/2 - 80, 110, 160, 22);
+    text(gap > 0 ? `${nm} ${gap} m 앞` : gap < 0 ? `${nm} ${-gap} m 뒤` : `${nm}와 나란히`, W/2, 121, 12, P ? P.color : '#7fd8ff', 'center');
+  }
 
   if(g.hurtT > 0){
     const a = g.hurtT / 0.45 * 0.55;
@@ -1261,6 +1414,121 @@ function render(){
     text(t.text, W/2, y, 28, t.color, 'center'); ctx.restore();
   });
   ctx.globalAlpha = 1;
+  if(mode === 'count' || g.stunT > 0){
+    ctx.fillStyle = 'rgba(23,19,31,.45)'; ctx.fillRect(0, 0, W, H);
+    ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.6)'; ctx.shadowBlur = 10;
+    if(mode === 'count'){
+      const n = Math.ceil(g.countT - 0.6), P = PL[g.duel.opp];
+      text(n > 0 ? String(n) : '출발!', W/2, H * 0.42, n > 0 ? 110 : 64, '#ffc93c', 'center');
+      text(`VS ${P ? P.name : '상대'}`, W/2, H * 0.56, 24, P ? P.color : '#fbf4e6', 'center');
+    } else {
+      text(`💫 ${Math.ceil(g.stunT)}`, W/2, H * 0.42, 80, '#fbf4e6', 'center');
+      text('잠깐 쉬어요', W/2, H * 0.53, 24, '#fbf4e6', 'center');
+    }
+    ctx.restore();
+  }
+}
+
+/* ===== 2인 대결 ===== */
+const FINISH = 1000;   // 결승선 거리(m)
+let lobby = null, lastDuel = false;
+function iGa(name){ const c = name.charCodeAt(name.length - 1) - 0xAC00; return c >= 0 && c < 11172 && c % 28 ? '이' : '가'; }
+function duelRecordText(p){ const r = remoteW[p] || {}; return `${PL[p].name} 대결 전적 ${r.wins | 0}승 ${r.losses | 0}패`; }
+function openDuel(){
+  if(!me) return;
+  closeLobby();
+  mode = 'menu'; g = null;
+  $('#menu').hidden = true; $('#over').hidden = true; $('#duelScr').hidden = false;
+  $('#duelHome').hidden = false; $('#duelWait').hidden = true; $('#duelErr').textContent = '';
+  $('#duelInfo').textContent = `${PL[me].name} ${CHARS[sel.ch].e} · 방을 만들면 ${MAPS[sel.map].name} · 결승선 ${FINISH} m`;
+  $('#duelRecord').textContent = duelRecordText(me);
+  if(!window.__fb || dbState !== 'shared') $('#duelErr').textContent = '인터넷에 연결되어야 대결할 수 있어요';
+}
+function closeLobby(){
+  if(!lobby) return;
+  if(lobby.unsub) lobby.unsub();
+  if(lobby.role === 'host' && !lobby.started && window.__fb) window.__fb.closeRoom(lobby.code).catch(() => {});
+  lobby = null;
+}
+async function makeRoom(){
+  const fb = window.__fb; if(!fb || lobby) return;
+  $('#duelErr').textContent = '';
+  for(let i = 0; i < 5; i++){
+    const code = String(Math.floor(1000 + Math.random() * 9000));
+    let ok = false;
+    try{ ok = await fb.createRoom(code, { map:sel.map, host:me, guest:null, state:'wait', created:Date.now(), seed:Math.floor(Math.random() * 1e9), winner:null, pay:0, prize:'' }); }
+    catch(e){ $('#duelErr').textContent = '방을 만들지 못했어요. 잠시 뒤 다시 해 보세요'; return; }
+    if(!ok) continue;
+    lobby = { code, role:'host', started:false };
+    $('#duelHome').hidden = true; $('#duelWait').hidden = false; $('#roomShow').textContent = code;
+    $('#waitMsg').textContent = `${MAPS[sel.map].name} · 상대에게 방 번호를 알려 주세요. 들어오면 바로 시작해요`;
+    lobby.unsub = fb.watchRoom(code, r => {
+      if(r && r.state === 'go' && r.guest && lobby && lobby.code === code && !lobby.started){ lobby.started = true; startDuel(code, r, 'host'); }
+    }, () => {});
+    return;
+  }
+  $('#duelErr').textContent = '방을 만들지 못했어요. 다시 눌러 보세요';
+}
+async function joinRoom(){
+  const fb = window.__fb; if(!fb || lobby) return;
+  const code = ($('#roomCode').value || '').replace(/\D/g, '');
+  if(code.length !== 4){ $('#duelErr').textContent = '방 번호 4자리를 넣어 주세요'; return; }
+  $('#duelErr').textContent = '';
+  let res;
+  try{ res = await fb.joinRoom(code, me); }catch(e){ $('#duelErr').textContent = '들어가지 못했어요. 번호를 확인해 주세요'; return; }
+  if(res.err){ $('#duelErr').textContent = res.err; return; }
+  lobby = { code, role:'guest', started:true };
+  startDuel(code, res.room, 'guest');
+}
+function startDuel(code, room, role){
+  const fb = window.__fb, oppRole = role === 'host' ? 'guest' : 'host';
+  if(lobby && lobby.unsub) lobby.unsub();
+  lobby = null; lastDuel = true;
+  startGame({ code, role, oppRole, opp:room[oppRole], map:room.map, seed:room.seed });
+  const D = g.duel;
+  D.unsubRoom = fb.watchRoom(code, r => { if(r && r.winner && g && g.duel === D && !D.ended) endDuel(r); }, () => {});
+  D.unsubLive = fb.watchLive(code, oppRole, v => {
+    if(!v || !g || g.duel !== D) return;
+    D.oppD = +v.d || 0; D.oppX = clamp(+v.x || 0, -RW, RW); if(CHARS[v.ch]) D.oppCh = v.ch;
+  }, () => {});
+  fb.pushLive(code, role, { d:0, x:0, ch:sel.ch, hp:g.hp, t:Date.now() }).catch(() => {});
+}
+function duelTick(dt){
+  const D = g.duel; if(D.ended) return;
+  D.pushT -= dt;
+  if(D.pushT <= 0){ D.pushT = 0.5; window.__fb.pushLive(D.code, D.role, { d:Math.round(g.d * 10) / 10, x:Math.round(g.p.x * 100) / 100, ch:sel.ch, hp:g.hp, t:Date.now() }).catch(() => {}); }
+  const ahead = g.d >= D.oppD, P = PL[D.opp];
+  if(D.wasAhead === false && ahead){ g.passes++; toast(`${P ? P.name : '상대'} 추월!`, '#7fd8ff'); }
+  D.wasAhead = ahead;
+  const rem = FINISH - g.d;
+  for(const m of [300, 100]) if(rem <= m && !D.said[m]){ D.said[m] = true; toast(`🏁 결승선까지 ${m} m!`, '#ffc93c'); }
+  if(!D.finished && g.d >= FINISH){
+    D.finished = true; g.d = FINISH;
+    toast('🏁 결승선 통과!', '#ffc93c');
+    window.__fb.finishRoom(D.code, D.role, pickItem(Math.random)).catch(() => {});
+  }
+}
+function endDuel(r){
+  const D = g.duel; D.ended = true;
+  if(D.unsubRoom) D.unsubRoom();
+  if(D.unsubLive) D.unsubLive();
+  mode = 'over'; $('#pauseBtn').hidden = true; $('#items').hidden = true; $('#pause').hidden = true;
+  const won = r.winner === D.role, P = PL[D.opp], oppName = P ? P.name : '상대';
+  $('#ovTag').textContent = won ? '🏆 승리!' : '아쉽게 졌어요';
+  $('#ovTag').className = 'tag' + (won ? ' rec' : '');
+  $('#ovDist').innerHTML = `${Math.floor(g.d)}<small> m</small>`;
+  $('#ovBest').textContent = won ? `${oppName}보다 먼저 결승선을 통과했어요` : `${oppName}${iGa(oppName)} 먼저 결승선을 통과했어요`;
+  $('#ovBoard').innerHTML = '';
+  $('#ovRank').textContent = (won ? 1 : 2) + '등';
+  $('#ovCoins').textContent = g.coinsTotal;
+  $('#ovPass').textContent = g.passes;
+  const left = g.coins; g.coins = 0; addWallet(left);
+  const it = ITEMS.find(x => x.id === r.prize), pay = r.pay | 0;
+  const msg = won ? `${oppName}에게 ${pay}원을 받았어요${it ? ` · 🎁 ${it.e} ${it.name} 획득!` : ''}` : `${oppName}에게 ${pay}원을 줬어요`;
+  const show = () => { if(mode === 'over' && lastDuel) $('#ovWallet').textContent = `${msg} · 지갑 🪙 ${myWallet()} · ${duelRecordText(me)}`; };
+  show(); setTimeout(show, 1500);
+  $('#againBtn').textContent = '다시 대결'; $('#menuBtn').textContent = '메뉴로';
+  $('#over').hidden = false; $('#againBtn').focus();
 }
 
 function heartPath(cx, cy, s){
@@ -1297,7 +1565,8 @@ function drawHearts(){
 let last = performance.now();
 function frame(ts){
   const dt = Math.min(0.033, Math.max(0, (ts - last) / 1000)); last = ts;
-  if(mode === 'play'){ update(dt); if(mode === 'play') syncItems(); }
+  if(mode === 'count' && g){ g.countT -= dt; if(g.countT <= 0){ mode = 'play'; toast('출발!'); } }
+  if(mode === 'play'){ update(dt); if(mode === 'play'){ syncItems(); if(g.duel) duelTick(dt); } }
   if(mode === 'menu') attractD += 5 * dt;
   render();
   requestAnimationFrame(frame);
@@ -1310,7 +1579,7 @@ window.addEventListener('keydown', e => {
   if(e.key === 'Escape' || e.key === 'p' || e.key === 'P') setPause(mode === 'play');
   if(mode === 'play' && /^[1-8]$/.test(e.key)) useItem(+e.key - 1);
   if(mode === 'play' && (e.key === 'ArrowUp' || e.key === ' ' || e.key === 'w' || e.key === 'W')){ if(!e.repeat) jump(); e.preventDefault(); }
-  if((e.key === 'Enter' || e.key === ' ') && (mode === 'menu' || mode === 'over') && $('#shop').hidden && document.activeElement === document.body){ startGame(); e.preventDefault(); }
+  if((e.key === 'Enter' || e.key === ' ') && (mode === 'menu' || mode === 'over') && $('#shop').hidden && $('#duelScr').hidden && !lastDuel && document.activeElement === document.body){ startGame(); e.preventDefault(); }
 });
 window.addEventListener('keyup', e => {
   if(e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = false;
@@ -1337,13 +1606,18 @@ cv.addEventListener('pointermove', e => {
 });
 const up = () => { pointer.down = false; };
 cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
-document.addEventListener('visibilitychange', () => { if(document.hidden) setPause(true); });
+document.addEventListener('visibilitychange', () => { if(document.hidden && !(g && g.duel)) setPause(true); });
 
 $('#startBtn').onclick = startGame;
 $('#shopBtn').onclick = openShop;
 $('#shopClose').onclick = closeShop;
-$('#againBtn').onclick = startGame;
-$('#menuBtn').onclick = () => { mode = 'menu'; g = null; $('#over').hidden = true; $('#menu').hidden = false; buildMenu(); };
+$('#againBtn').onclick = () => lastDuel ? openDuel() : startGame();
+$('#duelBtn').onclick = openDuel;
+$('#roomMake').onclick = makeRoom;
+$('#roomJoin').onclick = joinRoom;
+$('#roomCode').addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); joinRoom(); } });
+$('#duelClose').onclick = () => { closeLobby(); $('#duelScr').hidden = true; $('#menu').hidden = false; mode = 'menu'; g = null; buildMenu(); };
+$('#menuBtn').onclick = () => { lastDuel = false; mode = 'menu'; g = null; $('#over').hidden = true; $('#menu').hidden = false; buildMenu(); };
 $('#pauseBtn').onclick = () => setPause(true);
 $('#resumeBtn').onclick = () => setPause(false);
 $('#quitBtn').onclick = () => { $('#pause').hidden = true; mode = 'play'; g.hp = 0; endGame(); };
@@ -1353,7 +1627,7 @@ resize(); buildMenu(); initDb(); requestAnimationFrame(frame);
 
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getFirestore, collection, doc, setDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { getFirestore, collection, doc, setDoc, updateDoc, onSnapshot, runTransaction, increment } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 const app = initializeApp({
   apiKey: "AIzaSyBA6pbfk761Qh0FyZawlcljThZ_lkZhzKQ",
   authDomain: "family-dash-317ed.firebaseapp.com",
@@ -1365,7 +1639,51 @@ const app = initializeApp({
 const fs = getFirestore(app);
 window.__fb = {
   watch(cb, err){ return onSnapshot(collection(fs, 'scores'), s => cb(s.docs.map(d => d.data()), s.metadata.fromCache), err); },
-  set(key, rec){ return setDoc(doc(fs, 'scores', key), rec); }
+  set(key, rec){ return setDoc(doc(fs, 'scores', key), rec); },
+  watchWallets(cb, err){ return onSnapshot(collection(fs, 'wallets'), s => { const m = {}; s.docs.forEach(d => { m[d.id] = d.data(); }); cb(m); }, err); },
+  addWallet(p, coins, inv){
+    const data = {}, iv = {};
+    if(coins) data.coins = increment(coins);
+    for(const k in inv) if(inv[k]) iv[k] = increment(inv[k]);
+    if(Object.keys(iv).length) data.inv = iv;
+    return setDoc(doc(fs, 'wallets', p), data, { merge:true });
+  },
+  createRoom(code, data){
+    return runTransaction(fs, async tx => {
+      const ref = doc(fs, 'rooms', code), s = await tx.get(ref);
+      if(s.exists()){ const r = s.data(); if((r.state === 'wait' || r.state === 'go') && Date.now() - (r.created || 0) < 3600e3) return false; }
+      tx.set(ref, data); return true;
+    });
+  },
+  joinRoom(code, p){
+    return runTransaction(fs, async tx => {
+      const ref = doc(fs, 'rooms', code), s = await tx.get(ref);
+      if(!s.exists()) return { err:'없는 방 번호예요' };
+      const r = s.data();
+      if(r.state !== 'wait' || Date.now() - (r.created || 0) > 3600e3) return { err:'이미 시작했거나 닫힌 방이에요' };
+      if(r.host === p) return { err:'같은 별명끼리는 대결할 수 없어요' };
+      tx.update(ref, { guest:p, state:'go' });
+      return { room:{ ...r, guest:p, state:'go' } };
+    });
+  },
+  watchRoom(code, cb, err){ return onSnapshot(doc(fs, 'rooms', code), s => cb(s.exists() ? s.data() : null), err); },
+  closeRoom(code){ return updateDoc(doc(fs, 'rooms', code), { state:'closed' }); },
+  pushLive(code, role, data){ return setDoc(doc(fs, 'rooms', code, 'live', role), data); },
+  watchLive(code, role, cb, err){ return onSnapshot(doc(fs, 'rooms', code, 'live', role), s => cb(s.exists() ? s.data() : null), err); },
+  finishRoom(code, role, prize){
+    return runTransaction(fs, async tx => {
+      const rref = doc(fs, 'rooms', code), rs = await tx.get(rref), r = rs.data();
+      if(!r || r.winner || r.state !== 'go') return null;
+      const lose = role === 'host' ? 'guest' : 'host';
+      const lref = doc(fs, 'wallets', r[lose]), wref = doc(fs, 'wallets', r[role]);
+      const ls = await tx.get(lref);
+      const pay = Math.min(13, Math.max(0, ((ls.exists() ? ls.data().coins : 0) | 0)));   // 모자라면 있는 만큼만
+      tx.update(rref, { winner:role, state:'done', pay, prize });
+      tx.set(lref, { coins:increment(-pay), losses:increment(1) }, { merge:true });
+      tx.set(wref, { coins:increment(pay), wins:increment(1), inv:{ [prize]:increment(1) } }, { merge:true });
+      return { pay };
+    });
+  }
 };
 window.dispatchEvent(new Event('fb-ready'));
 </script>

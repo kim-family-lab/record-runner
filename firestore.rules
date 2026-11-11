@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 가족 기록
+    match /scores/{id} {
+      function valid() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['p', 'map', 'ch', 'dist', 'at'])
+          && d.p in ['n1', 'n2', 'n3', 'n4']
+          && d.map is string && d.map.matches('^[a-z0-9]{1,16}$')
+          && d.ch is string && d.ch.matches('^[a-z0-9]{1,16}$')
+          && d.dist is number && d.dist > 0 && d.dist < 1000000
+          && d.at is string && d.at.size() < 40
+          && id == d.p + '-' + d.map + '-' + d.ch;
+      }
+      allow read: if true;
+      allow create: if valid();
+      allow update: if valid() && request.resource.data.dist > resource.data.dist;
+      allow delete: if false;
+    }
+
+    // 별명별 지갑, 가진 아이템, 대결 전적
+    match /wallets/{p} {
+      function validWallet() {
+        let d = request.resource.data;
+        return p in ['n1', 'n2', 'n3', 'n4']
+          && d.keys().hasOnly(['coins', 'inv', 'wins', 'losses'])
+          && (!('coins' in d) || (d.coins is int && d.coins >= 0 && d.coins < 10000000))
+          && (!('inv' in d) || (d.inv is map && d.inv.size() <= 20))
+          && (!('wins' in d) || d.wins is int)
+          && (!('losses' in d) || d.losses is int);
+      }
+      allow read: if true;
+      allow create, update: if validWallet();
+      allow delete: if false;
+    }
+
+    // 2인 대결 방
+    match /rooms/{code} {
+      allow read: if true;
+      allow create, update: if code.matches('^[0-9]{4}$')
+        && request.resource.data.keys().hasOnly(['map', 'host', 'guest', 'state', 'created', 'seed', 'winner', 'pay', 'prize'])
+        && request.resource.data.host in ['n1', 'n2', 'n3', 'n4']
+        && request.resource.data.state in ['wait', 'go', 'done', 'closed'];
+      allow delete: if false;
+
+      // 달리는 중 위치
+      match /live/{role} {
+        allow read: if true;
+        allow create, update: if role in ['host', 'guest']
+          && request.resource.data.keys().hasOnly(['d', 'x', 'ch', 'hp', 't'])
+          && request.resource.data.d is number;
+        allow delete: if false;
+      }
+    }
+
+    // 그 밖의 모든 것은 막음
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
