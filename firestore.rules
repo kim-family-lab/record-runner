@@ -36,19 +36,21 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // 2인 대결 방
+    // 가족 대결 방 (2~4명)
     match /rooms/{code} {
       allow read: if true;
       allow create, update: if code.matches('^[0-9]{4}$')
-        && request.resource.data.keys().hasOnly(['map', 'host', 'guest', 'state', 'created', 'seed', 'winner', 'pay', 'prize'])
+        && request.resource.data.keys().hasOnly(['map', 'host', 'ps', 'state', 'created', 'seed', 'winner', 'ranks', 'finalD', 'moves', 'prize'])
         && request.resource.data.host in ['n1', 'n2', 'n3', 'n4']
+        && request.resource.data.ps is list && request.resource.data.ps.size() <= 4
+        && request.resource.data.ps.hasOnly(['n1', 'n2', 'n3', 'n4'])
         && request.resource.data.state in ['wait', 'go', 'done', 'closed'];
       allow delete: if false;
 
-      // 달리는 중 위치
-      match /live/{role} {
+      // 달리는 중 위치 (별명별)
+      match /live/{pid} {
         allow read: if true;
-        allow create, update: if role in ['host', 'guest']
+        allow create, update: if pid in ['n1', 'n2', 'n3', 'n4']
           && request.resource.data.keys().hasOnly(['d', 'x', 'ch', 'hp', 't'])
           && request.resource.data.d is number;
         allow delete: if false;

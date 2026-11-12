@@ -109,6 +109,9 @@ section{width:100%}
 #roomCode:focus-visible{outline:3px solid var(--ice);outline-offset:2px}
 #duelErr{color:#ff8a6b;min-height:1.2em}
 .or{margin:0;color:var(--muted);font-size:13px}
+.waitlist{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:8px 0}
+.wp{padding:6px 12px;border-radius:999px;border:2px solid var(--c);font-size:15px}
+.row.static{cursor:default}
 .shoplist{display:flex;flex-direction:column;gap:6px;width:100%}
 .srow{display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:8px;align-items:center;background:var(--panel);border:2px solid var(--line);border-radius:12px;padding:8px 10px;text-align:left}
 .srow .se{font-size:26px;text-align:center}
@@ -173,7 +176,7 @@ section{width:100%}
       </section>
       <button class="go" id="startBtn">출발!</button>
       <button class="ghost" id="shopBtn">🛒 상점</button>
-      <button class="ghost" id="duelBtn">⚔️ 2인 대결</button>
+      <button class="ghost" id="duelBtn">⚔️ 가족 대결</button>
       <section>
         <h2 id="boardTitle">가족 순위</h2>
         <div class="board" id="board"></div>
@@ -201,7 +204,7 @@ section{width:100%}
     </div>
 
     <div id="duelScr" class="screen" hidden>
-      <p class="tag rec">⚔️ 2인 대결</p>
+      <p class="tag rec">⚔️ 가족 대결</p>
       <p class="sub" id="duelInfo"></p>
       <div id="duelHome" class="btns">
         <button class="go" id="roomMake">방 만들기</button>
@@ -214,7 +217,9 @@ section{width:100%}
       <div id="duelWait" hidden>
         <p class="note">방 번호</p>
         <div class="big" id="roomShow">----</div>
+        <div class="waitlist" id="waitList"></div>
         <p class="note" id="waitMsg"></p>
+        <button class="go" id="roomStart" hidden>시작!</button>
       </div>
       <p class="note" id="duelErr"></p>
       <p class="bank" id="duelRecord"></p>
@@ -510,7 +515,7 @@ function buildMenu(){
     mb.appendChild(b);
   }
   $('#duelBtn').disabled = !me || dbState !== 'shared';
-  $('#duelBtn').textContent = !me ? '⚔️ 2인 대결' : dbState === 'shared' ? '⚔️ 2인 대결' : '⚔️ 2인 대결 (인터넷 연결 필요)';
+  $('#duelBtn').textContent = !me ? '⚔️ 가족 대결' : dbState === 'shared' ? '⚔️ 가족 대결' : '⚔️ 가족 대결 (인터넷 연결 필요)';
   $('#shopBtn').disabled = !me; $('#shopBtn').textContent = me ? `🛒 상점 · 지갑 🪙 ${myWallet()}` : '🛒 상점';
   $('#bank').textContent = '🪙 달리다 남은 코인은 지갑에 모여요 · 상점에서 미리 사 둘 수 있어요';
   renderBoards();
@@ -537,7 +542,7 @@ function startGame(duelOpts){
     myBest: mine ? mine.dist : 0, brokeMine:false, chBest: (scores[keyOf(me, mapId, sel.ch)] || {}).dist || 0,
     famBest: ft && ft.P.id !== me ? ft.b.dist : 0, famName: ft ? ft.P.name : '', famColor: ft ? ft.P.color : '#ffc93c', brokeFam:false,
     meTop: !duel && (!ft || ft.P.id === me), passes:0,
-    duel: duel ? { ...duel, oppD:0, oppX:0, oppCh:'boy', pushT:0, said:{}, wasAhead:null, finished:false, ended:false } : null,
+    duel: duel ? { ...duel, opps:{}, pushT:0, said:{}, finished:false, ended:false } : null,
     rng: mulberry32(duel ? duel.seed : Math.floor(Math.random() * 1e9)), nextBox:0, stunT:0, countT: duel ? 3.6 : 0,
     p:{ x:0, vx:0, inv:0, y:0, vy:0, air:false }, jumpBuf:0, lastRiver:-99, riverHint:false, justRiver:false, hurtT:0, lostHeart:null,
     obs:[], coinList:[], parts:[], toasts:[],
@@ -1293,8 +1298,12 @@ function render(){
     }
   }
   if(g.duel){
-    const D = g.duel, oz = D.oppD - g.d, P = PL[D.opp];
-    if(oz > -0.6 && oz < ZMAX) items.push({ z:oz, f:() => drawRunner(CHARS[D.oppCh].e, D.oppX, oz, 0.62, Math.abs(Math.sin(g.t * 10)) * 0.06, P ? P.name : '상대') });
+    const D = g.duel;
+    for(const s of duelStand()){
+      if(s.me || s.left) continue;
+      const o = D.opps[s.p], oz = s.d - g.d; if(!o) continue;
+      if(oz > -0.6 && oz < ZMAX) items.push({ z:oz, f:() => drawRunner(CHARS[o.ch].e, o.x, oz, 0.62, Math.abs(Math.sin(g.t * 10 + o.x)) * 0.06, nameOf(s.p)) });
+    }
     const fz = FINISH - g.d;
     if(fz > -0.5 && fz < ZMAX) items.push({ z:fz + 0.3, f:() => drawFinish(fz) });
   }
@@ -1390,15 +1399,19 @@ function render(){
   drawHearts();
   chip(W - 86, 58, 76, 28);
   text(`🪙 ${g.coins}`, W - 20, 72, 16, '#ffc93c', 'right');
-  const rk = g.duel ? (g.d >= g.duel.oppD ? 1 : 2) : rank();
+  const stand = g.duel ? duelStand() : null;
+  const rk = g.duel ? stand.findIndex(s => s.me) + 1 : rank();
   chip(W/2 - 34, 76, 68, 30);
   text(`${rk}등`, W/2, 92, 18, rk === 1 ? '#ffc93c' : '#fbf4e6', 'center');
   const nxt = g.rivals.filter(r => r.d > g.d).sort((a, b) => a.d - b.d)[0];
   if(nxt){ chip(W/2 - 70, 110, 140, 22); text(`${nxt.name}까지 ${Math.ceil(nxt.d - g.d)} m`, W/2, 121, 12, '#7fd8ff', 'center'); }
   if(g.duel){
-    const D = g.duel, P = PL[D.opp], gap = Math.round(D.oppD - g.d), nm = P ? P.name : '상대';
-    chip(W/2 - 80, 110, 160, 22);
-    text(gap > 0 ? `${nm} ${gap} m 앞` : gap < 0 ? `${nm} ${-gap} m 뒤` : `${nm}와 나란히`, W/2, 121, 12, P ? P.color : '#7fd8ff', 'center');
+    const other = rk > 1 ? stand[rk - 2] : stand[1];
+    if(other && !other.left){
+      const gap = Math.round(Math.abs(other.d - g.d)), P = PL[other.p];
+      chip(W/2 - 80, 110, 160, 22);
+      text(rk > 1 ? `${nameOf(other.p)} ${gap} m 앞` : `${nameOf(other.p)} ${gap} m 뒤`, W/2, 121, 12, P ? P.color : '#7fd8ff', 'center');
+    }
   }
 
   if(g.hurtT > 0){
@@ -1418,9 +1431,9 @@ function render(){
     ctx.fillStyle = 'rgba(23,19,31,.45)'; ctx.fillRect(0, 0, W, H);
     ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.6)'; ctx.shadowBlur = 10;
     if(mode === 'count'){
-      const n = Math.ceil(g.countT - 0.6), P = PL[g.duel.opp];
+      const n = Math.ceil(g.countT - 0.6);
       text(n > 0 ? String(n) : '출발!', W/2, H * 0.42, n > 0 ? 110 : 64, '#ffc93c', 'center');
-      text(`VS ${P ? P.name : '상대'}`, W/2, H * 0.56, 24, P ? P.color : '#fbf4e6', 'center');
+      text(`VS ${g.duel.ps.filter(p => p !== me).map(nameOf).join(' · ')}`, W/2, H * 0.56, 22, '#fbf4e6', 'center');
     } else {
       text(`💫 ${Math.ceil(g.stunT)}`, W/2, H * 0.42, 80, '#fbf4e6', 'center');
       text('잠깐 쉬어요', W/2, H * 0.53, 24, '#fbf4e6', 'center');
@@ -1429,42 +1442,70 @@ function render(){
   }
 }
 
-/* ===== 2인 대결 ===== */
-const FINISH = 1000;   // 결승선 거리(m)
+/* ===== 가족 대결 (2~4명) ===== */
+const FINISH = 1000;        // 결승선 거리(m)
+const MAX_PLAYERS = 4;
+const STALE_MS = 15000;     // 이만큼 소식이 없으면 나간 것으로 보고 꼴찌 처리
+/* 등수별 코인 [주는 등수, 받는 등수, 금액] (0 = 1등). 모자라면 있는 만큼만 */
+const PAYS = { 2:[[1, 0, 13]], 3:[[2, 0, 13]], 4:[[3, 0, 13], [2, 1, 5]] };
 let lobby = null, lastDuel = false;
 function iGa(name){ const c = name.charCodeAt(name.length - 1) - 0xAC00; return c >= 0 && c < 11172 && c % 28 ? '이' : '가'; }
-function duelRecordText(p){ const r = remoteW[p] || {}; return `${PL[p].name} 대결 전적 ${r.wins | 0}승 ${r.losses | 0}패`; }
+function nameOf(p){ return PL[p] ? PL[p].name : '누군가'; }
+function duelRecordText(p){ const r = remoteW[p] || {}; return `${PL[p].name} 대결 1등 ${r.wins | 0}번`; }
 function openDuel(){
   if(!me) return;
   closeLobby();
   mode = 'menu'; g = null;
   $('#menu').hidden = true; $('#over').hidden = true; $('#duelScr').hidden = false;
   $('#duelHome').hidden = false; $('#duelWait').hidden = true; $('#duelErr').textContent = '';
-  $('#duelInfo').textContent = `${PL[me].name} ${CHARS[sel.ch].e} · 방을 만들면 ${MAPS[sel.map].name} · 결승선 ${FINISH} m`;
+  $('#duelInfo').textContent = `${PL[me].name} ${CHARS[sel.ch].e} · 방을 만들면 ${MAPS[sel.map].name} · 2~${MAX_PLAYERS}명 · 결승선 ${FINISH} m`;
   $('#duelRecord').textContent = duelRecordText(me);
   if(!window.__fb || dbState !== 'shared') $('#duelErr').textContent = '인터넷에 연결되어야 대결할 수 있어요';
 }
 function closeLobby(){
   if(!lobby) return;
   if(lobby.unsub) lobby.unsub();
-  if(lobby.role === 'host' && !lobby.started && window.__fb) window.__fb.closeRoom(lobby.code).catch(() => {});
+  const fb = window.__fb;
+  if(fb && !lobby.started){
+    if(lobby.host) fb.closeRoom(lobby.code).catch(() => {});
+    else fb.leaveRoom(lobby.code, me).catch(() => {});
+  }
   lobby = null;
+}
+function showWait(code, r){
+  $('#duelHome').hidden = true; $('#duelWait').hidden = false; $('#roomShow').textContent = code;
+  const ps = (r.ps || []).filter(p => PL[p]), box = $('#waitList');
+  box.innerHTML = '';
+  ps.forEach(p => { const el = document.createElement('span'); el.className = 'wp'; el.style.setProperty('--c', PL[p].color); el.textContent = nameOf(p) + (p === r.host ? ' 👑' : ''); box.appendChild(el); });
+  const host = lobby && lobby.host;
+  $('#roomStart').hidden = !host; $('#roomStart').disabled = ps.length < 2;
+  $('#waitMsg').textContent = `${MAPS[r.map] ? MAPS[r.map].name : ''} · ${ps.length}/${MAX_PLAYERS}명 · `
+    + (host ? (ps.length < 2 ? '가족에게 방 번호를 알려 주세요' : '모두 들어오면 시작을 눌러요') : '방장이 시작하기를 기다려요');
+}
+function watchLobby(code){
+  lobby.unsub = window.__fb.watchRoom(code, r => {
+    if(!lobby || lobby.code !== code) return;
+    if(!r || r.state === 'closed'){
+      if(lobby.unsub) lobby.unsub(); lobby = null;
+      $('#duelWait').hidden = true; $('#duelHome').hidden = false; $('#duelErr').textContent = '방장이 방을 닫았어요';
+      return;
+    }
+    if(r.state === 'go' && !lobby.started){ lobby.started = true; startDuel(code, r); return; }
+    showWait(code, r);
+  }, () => {});
 }
 async function makeRoom(){
   const fb = window.__fb; if(!fb || lobby) return;
   $('#duelErr').textContent = '';
   for(let i = 0; i < 5; i++){
     const code = String(Math.floor(1000 + Math.random() * 9000));
+    const data = { map:sel.map, host:me, ps:[me], state:'wait', created:Date.now(), seed:Math.floor(Math.random() * 1e9), winner:null, ranks:[], finalD:{}, moves:[], prize:'' };
     let ok = false;
-    try{ ok = await fb.createRoom(code, { map:sel.map, host:me, guest:null, state:'wait', created:Date.now(), seed:Math.floor(Math.random() * 1e9), winner:null, pay:0, prize:'' }); }
+    try{ ok = await fb.createRoom(code, data); }
     catch(e){ $('#duelErr').textContent = '방을 만들지 못했어요. 잠시 뒤 다시 해 보세요'; return; }
     if(!ok) continue;
-    lobby = { code, role:'host', started:false };
-    $('#duelHome').hidden = true; $('#duelWait').hidden = false; $('#roomShow').textContent = code;
-    $('#waitMsg').textContent = `${MAPS[sel.map].name} · 상대에게 방 번호를 알려 주세요. 들어오면 바로 시작해요`;
-    lobby.unsub = fb.watchRoom(code, r => {
-      if(r && r.state === 'go' && r.guest && lobby && lobby.code === code && !lobby.started){ lobby.started = true; startDuel(code, r, 'host'); }
-    }, () => {});
+    lobby = { code, host:true, started:false };
+    showWait(code, data); watchLobby(code);
     return;
   }
   $('#duelErr').textContent = '방을 만들지 못했어요. 다시 눌러 보세요';
@@ -1477,35 +1518,59 @@ async function joinRoom(){
   let res;
   try{ res = await fb.joinRoom(code, me); }catch(e){ $('#duelErr').textContent = '들어가지 못했어요. 번호를 확인해 주세요'; return; }
   if(res.err){ $('#duelErr').textContent = res.err; return; }
-  lobby = { code, role:'guest', started:true };
-  startDuel(code, res.room, 'guest');
+  lobby = { code, host:false, started:false };
+  showWait(code, res.room); watchLobby(code);
 }
-function startDuel(code, room, role){
-  const fb = window.__fb, oppRole = role === 'host' ? 'guest' : 'host';
+async function startRoom(){
+  if(!lobby || !lobby.host) return;
+  $('#roomStart').disabled = true;
+  try{ await window.__fb.startRoom(lobby.code); }
+  catch(e){ $('#duelErr').textContent = '시작하지 못했어요. 다시 눌러 보세요'; $('#roomStart').disabled = false; }
+}
+function startDuel(code, room){
+  const fb = window.__fb;
   if(lobby && lobby.unsub) lobby.unsub();
   lobby = null; lastDuel = true;
-  startGame({ code, role, oppRole, opp:room[oppRole], map:room.map, seed:room.seed });
+  const ps = (room.ps || []).filter(p => PL[p]);
+  startGame({ code, ps, map:room.map, seed:room.seed });
   const D = g.duel;
   D.unsubRoom = fb.watchRoom(code, r => { if(r && r.winner && g && g.duel === D && !D.ended) endDuel(r); }, () => {});
-  D.unsubLive = fb.watchLive(code, oppRole, v => {
-    if(!v || !g || g.duel !== D) return;
-    D.oppD = +v.d || 0; D.oppX = clamp(+v.x || 0, -RW, RW); if(CHARS[v.ch]) D.oppCh = v.ch;
+  D.unsubLive = fb.watchLive(code, m => {
+    if(!g || g.duel !== D) return;
+    for(const p in m){
+      if(p === me || !PL[p]) continue;
+      const v = m[p], o = D.opps[p] = D.opps[p] || { d:0, x:0, ch:'boy', ahead:null, seen:0 };
+      o.d = +v.d || 0; o.x = clamp(+v.x || 0, -RW, RW); if(CHARS[v.ch]) o.ch = v.ch; o.seen = Date.now();
+    }
   }, () => {});
-  fb.pushLive(code, role, { d:0, x:0, ch:sel.ch, hp:g.hp, t:Date.now() }).catch(() => {});
+  fb.pushLive(code, me, { d:0, x:0, ch:sel.ch, hp:g.hp, t:Date.now() }).catch(() => {});
+}
+function duelStand(){   // 지금 순위. 소식이 끊긴 사람은 꼴찌
+  const D = g.duel, now = Date.now(), list = [{ p:me, d:g.d, me:true, left:false }];
+  for(const p of D.ps){
+    if(p === me) continue;
+    const o = D.opps[p];
+    list.push({ p, d:o ? o.d : 0, left: o ? now - o.seen > STALE_MS : g.t > 15 });
+  }
+  return list.sort((a, b) => (b.left ? -1 : b.d) - (a.left ? -1 : a.d) || (a.me ? -1 : b.me ? 1 : 0));
 }
 function duelTick(dt){
   const D = g.duel; if(D.ended) return;
   D.pushT -= dt;
-  if(D.pushT <= 0){ D.pushT = 0.5; window.__fb.pushLive(D.code, D.role, { d:Math.round(g.d * 10) / 10, x:Math.round(g.p.x * 100) / 100, ch:sel.ch, hp:g.hp, t:Date.now() }).catch(() => {}); }
-  const ahead = g.d >= D.oppD, P = PL[D.opp];
-  if(D.wasAhead === false && ahead){ g.passes++; toast(`${P ? P.name : '상대'} 추월!`, '#7fd8ff'); }
-  D.wasAhead = ahead;
+  if(D.pushT <= 0){ D.pushT = 0.5; window.__fb.pushLive(D.code, me, { d:Math.round(g.d * 10) / 10, x:Math.round(g.p.x * 100) / 100, ch:sel.ch, hp:g.hp, t:Date.now() }).catch(() => {}); }
+  for(const p in D.opps){
+    const o = D.opps[p], ahead = g.d >= o.d;
+    if(o.ahead === false && ahead){ g.passes++; toast(`${nameOf(p)} 추월!`, '#7fd8ff'); }
+    o.ahead = ahead;
+  }
   const rem = FINISH - g.d;
   for(const m of [300, 100]) if(rem <= m && !D.said[m]){ D.said[m] = true; toast(`🏁 결승선까지 ${m} m!`, '#ffc93c'); }
   if(!D.finished && g.d >= FINISH){
     D.finished = true; g.d = FINISH;
     toast('🏁 결승선 통과!', '#ffc93c');
-    window.__fb.finishRoom(D.code, D.role, pickItem(Math.random)).catch(() => {});
+    const st = duelStand();
+    const ranks = st.map(s => s.p), finalD = Object.fromEntries(st.map(s => [s.p, s.left ? -1 : Math.floor(s.d)]));
+    window.__fb.finishRoom(D.code, me, ranks, finalD, pickItem(Math.random), PAYS[ranks.length] || []).catch(() => {});
   }
 }
 function endDuel(r){
@@ -1513,18 +1578,32 @@ function endDuel(r){
   if(D.unsubRoom) D.unsubRoom();
   if(D.unsubLive) D.unsubLive();
   mode = 'over'; $('#pauseBtn').hidden = true; $('#items').hidden = true; $('#pause').hidden = true;
-  const won = r.winner === D.role, P = PL[D.opp], oppName = P ? P.name : '상대';
-  $('#ovTag').textContent = won ? '🏆 승리!' : '아쉽게 졌어요';
+  const ranks = (r.ranks || []).filter(p => PL[p]), my = ranks.indexOf(me) + 1, won = r.winner === me;
+  $('#ovTag').textContent = won ? '🏆 1등!' : my ? `${my}등` : '대결 끝';
   $('#ovTag').className = 'tag' + (won ? ' rec' : '');
   $('#ovDist').innerHTML = `${Math.floor(g.d)}<small> m</small>`;
-  $('#ovBest').textContent = won ? `${oppName}보다 먼저 결승선을 통과했어요` : `${oppName}${iGa(oppName)} 먼저 결승선을 통과했어요`;
-  $('#ovBoard').innerHTML = '';
-  $('#ovRank').textContent = (won ? 1 : 2) + '등';
+  const wn = nameOf(r.winner);
+  $('#ovBest').textContent = won ? '가장 먼저 결승선을 통과했어요' : `${wn}${iGa(wn)} 먼저 결승선을 통과했어요`;
+  const box = $('#ovBoard'); box.innerHTML = '';
+  ranks.forEach((p, i) => {
+    const row = document.createElement('div'); row.className = 'row static' + (p === me ? ' mine' : ''); row.style.setProperty('--c', PL[p].color);
+    const d = (r.finalD || {})[p], ch = p === me ? sel.ch : (D.opps[p] || {}).ch;
+    row.innerHTML = `<span class="rk${i === 0 ? ' first' : ''}">${i + 1}등</span><span class="dot"></span><span class="nm"></span><span class="ce">${CHARS[ch] ? CHARS[ch].e : ''}</span><span class="ds${d < 0 ? ' none' : ''}">${d < 0 ? '나감' : (d | 0) + ' m'}</span>`;
+    row.querySelector('.nm').textContent = nameOf(p);
+    box.appendChild(row);
+  });
+  $('#ovRank').textContent = my ? my + '등' : '-';
   $('#ovCoins').textContent = g.coinsTotal;
   $('#ovPass').textContent = g.passes;
   const left = g.coins; g.coins = 0; addWallet(left);
-  const it = ITEMS.find(x => x.id === r.prize), pay = r.pay | 0;
-  const msg = won ? `${oppName}에게 ${pay}원을 받았어요${it ? ` · 🎁 ${it.e} ${it.name} 획득!` : ''}` : `${oppName}에게 ${pay}원을 줬어요`;
+  const parts = [];
+  for(const m of r.moves || []){
+    if(m.t === me) parts.push(`${nameOf(m.f)}에게 ${m.c}원을 받았어요`);
+    if(m.f === me) parts.push(`${nameOf(m.t)}에게 ${m.c}원을 줬어요`);
+  }
+  const it = ITEMS.find(x => x.id === r.prize);
+  if(won && it) parts.push(`🎁 ${it.e} ${it.name} 획득!`);
+  const msg = parts.length ? parts.join(' · ') : '코인 주고받기는 없어요';
   const show = () => { if(mode === 'over' && lastDuel) $('#ovWallet').textContent = `${msg} · 지갑 🪙 ${myWallet()} · ${duelRecordText(me)}`; };
   show(); setTimeout(show, 1500);
   $('#againBtn').textContent = '다시 대결'; $('#menuBtn').textContent = '메뉴로';
@@ -1615,6 +1694,7 @@ $('#againBtn').onclick = () => lastDuel ? openDuel() : startGame();
 $('#duelBtn').onclick = openDuel;
 $('#roomMake').onclick = makeRoom;
 $('#roomJoin').onclick = joinRoom;
+$('#roomStart').onclick = startRoom;
 $('#roomCode').addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); joinRoom(); } });
 $('#duelClose').onclick = () => { closeLobby(); $('#duelScr').hidden = true; $('#menu').hidden = false; mode = 'menu'; g = null; buildMenu(); };
 $('#menuBtn').onclick = () => { lastDuel = false; mode = 'menu'; g = null; $('#over').hidden = true; $('#menu').hidden = false; buildMenu(); };
@@ -1659,29 +1739,46 @@ window.__fb = {
     return runTransaction(fs, async tx => {
       const ref = doc(fs, 'rooms', code), s = await tx.get(ref);
       if(!s.exists()) return { err:'없는 방 번호예요' };
-      const r = s.data();
+      const r = s.data(), ps = r.ps || [];
       if(r.state !== 'wait' || Date.now() - (r.created || 0) > 3600e3) return { err:'이미 시작했거나 닫힌 방이에요' };
-      if(r.host === p) return { err:'같은 별명끼리는 대결할 수 없어요' };
-      tx.update(ref, { guest:p, state:'go' });
-      return { room:{ ...r, guest:p, state:'go' } };
+      if(ps.includes(p)) return { room:r };
+      if(ps.length >= 4) return { err:'방이 꽉 찼어요 (4명)' };
+      const nps = [...ps, p];
+      tx.update(ref, { ps:nps });
+      return { room:{ ...r, ps:nps } };
     });
   },
+  leaveRoom(code, p){
+    return runTransaction(fs, async tx => {
+      const ref = doc(fs, 'rooms', code), s = await tx.get(ref);
+      if(!s.exists()) return;
+      const r = s.data();
+      if(r.state === 'wait') tx.update(ref, { ps:(r.ps || []).filter(x => x !== p) });
+    });
+  },
+  startRoom(code){ return updateDoc(doc(fs, 'rooms', code), { state:'go' }); },
   watchRoom(code, cb, err){ return onSnapshot(doc(fs, 'rooms', code), s => cb(s.exists() ? s.data() : null), err); },
   closeRoom(code){ return updateDoc(doc(fs, 'rooms', code), { state:'closed' }); },
-  pushLive(code, role, data){ return setDoc(doc(fs, 'rooms', code, 'live', role), data); },
-  watchLive(code, role, cb, err){ return onSnapshot(doc(fs, 'rooms', code, 'live', role), s => cb(s.exists() ? s.data() : null), err); },
-  finishRoom(code, role, prize){
+  pushLive(code, p, data){ return setDoc(doc(fs, 'rooms', code, 'live', p), data); },
+  watchLive(code, cb, err){ return onSnapshot(collection(fs, 'rooms', code, 'live'), s => { const m = {}; s.docs.forEach(d => { m[d.id] = d.data(); }); cb(m); }, err); },
+  finishRoom(code, p, ranks, finalD, prize, rules){
     return runTransaction(fs, async tx => {
-      const rref = doc(fs, 'rooms', code), rs = await tx.get(rref), r = rs.data();
+      const rref = doc(fs, 'rooms', code), r = (await tx.get(rref)).data();
       if(!r || r.winner || r.state !== 'go') return null;
-      const lose = role === 'host' ? 'guest' : 'host';
-      const lref = doc(fs, 'wallets', r[lose]), wref = doc(fs, 'wallets', r[role]);
-      const ls = await tx.get(lref);
-      const pay = Math.min(13, Math.max(0, ((ls.exists() ? ls.data().coins : 0) | 0)));   // 모자라면 있는 만큼만
-      tx.update(rref, { winner:role, state:'done', pay, prize });
-      tx.set(lref, { coins:increment(-pay), losses:increment(1) }, { merge:true });
-      tx.set(wref, { coins:increment(pay), wins:increment(1), inv:{ [prize]:increment(1) } }, { merge:true });
-      return { pay };
+      const have = {};
+      for(const [from] of rules){ const q = ranks[from]; if(q && !(q in have)){ const ws = await tx.get(doc(fs, 'wallets', q)); have[q] = Math.max(0, (ws.exists() ? ws.data().coins : 0) | 0); } }
+      const moves = [], delta = {};
+      for(const [from, to, amt] of rules){
+        const a = ranks[from], b = ranks[to]; if(!a || !b) continue;
+        const c = Math.min(amt, have[a]); have[a] -= c;
+        if(c > 0){ moves.push({ f:a, t:b, c }); delta[a] = (delta[a] || 0) - c; delta[b] = (delta[b] || 0) + c; }
+      }
+      tx.update(rref, { winner:p, state:'done', ranks, finalD, moves, prize });
+      const writes = {};
+      for(const q in delta) if(delta[q]) writes[q] = { coins:increment(delta[q]) };
+      writes[p] = { ...(writes[p] || {}), wins:increment(1), inv:{ [prize]:increment(1) } };
+      for(const q in writes) tx.set(doc(fs, 'wallets', q), writes[q], { merge:true });
+      return { moves };
     });
   }
 };
