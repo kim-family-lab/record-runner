@@ -67,10 +67,11 @@ section{width:100%}
 .trait{margin:8px 0 0;font-size:15px;min-height:1.3em}
 .stats-row{display:flex;justify-content:center;gap:10px;margin-top:6px;font-size:12px;color:var(--muted)}
 .stats-row b{color:var(--ink);font-weight:400}
-.maps{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.maps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
 .map{font:inherit;color:var(--ink);border:2px solid var(--line);border-radius:14px;padding:10px 8px;cursor:pointer;text-align:left;display:flex;flex-direction:column;gap:2px}
 .map.volcano{background:linear-gradient(135deg,#4a1c12,#2a120c)}
 .map.ice{background:linear-gradient(135deg,#1e4a63,#15283a)}
+.map.sea{background:linear-gradient(135deg,#0f5f80,#0b2f4a)}
 .map .mt{font-size:18px}
 .map .mb{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 .map[aria-checked="true"]{border-color:var(--gold)}
@@ -255,7 +256,8 @@ const CHARS = {
 };
 const MAPS = {
   volcano: { name:'화산 맵', slip:false },
-  ice:     { name:'얼음 맵', slip:true }
+  ice:     { name:'얼음 맵', slip:true },
+  sea:     { name:'바다 맵', slip:false }
 };
 const RIVALS = [
   { e:'🦊', name:'여우', head:15,  v:6.8, lane:-1 },
@@ -278,7 +280,10 @@ const ITEMS = [
 ];
 const FLY_H = 1.5;
 /* 괴물: 이 거리부터 무작위로 나타나 MON_DUR초 동안 공격해요 */
-const MON_START = 2000, MON_DUR = 5;   // 제트팩으로 나는 높이
+const MON_START = 2000, MON_DUR = 5;
+/* 바다 맵: 이 거리마다 바다 위와 바닷속을 번갈아 달려요 */
+const SEA_ZONE = 500;
+function seaDeep(d){ return Math.floor(d / SEA_ZONE) % 2 === 1; }   // 제트팩으로 나는 높이
 const PRICE_UP = 1.5;
 
 /* ===== 카메라(캐릭터 뒤에서 보는 시점) ===== */
@@ -508,7 +513,7 @@ function buildMenu(){
     const b = document.createElement('button');
     b.className = 'map ' + id; b.id = 'map-' + id; b.setAttribute('role','radio');
     b.setAttribute('aria-checked', String(sel.map === id));
-    const hint = id === 'volcano' ? '불덩이 · 용암 · 바위' : '눈덩이 · 얼음덩어리 · 미끌미끌';
+    const hint = { volcano:'불덩이 · 용암 · 바위', ice:'눈덩이 · 얼음 · 미끌미끌', sea:'파도 · 소용돌이 · 상어 · 그물' }[id] || '';
     b.innerHTML = `<span class="mt">${m.name}</span><span class="mb">${hint}</span><span class="mb" data-top></span>`;
     const ft = famTop(id); b.querySelector('[data-top]').textContent = ft ? `1등 ${ft.P.name} ${fmtM(ft.b.dist)}` : '아직 기록 없음';
     b.onclick = () => { sel.map = id; store.set('rk-sel', sel); buildMenu(); };
@@ -656,18 +661,18 @@ function syncItems(){
 function startMonster(){
   const attack = Math.random() < 0.5 ? 'breath' : 'spear';
   g.mon = { t:0, attack, thrown:0 };
-  const ice = g.mapId === 'ice';
-  toast(ice ? '❄️ 눈 괴물이 나타났다!' : '🌋 화산 괴물이 나타났다!', ice ? '#7fd8ff' : '#ff8a4a');
+  const ice = g.mapId === 'ice', sea = g.mapId === 'sea';
+  toast(sea ? '🐙 크라켄이 나타났다!' : ice ? '❄️ 눈 괴물이 나타났다!' : '🌋 화산 괴물이 나타났다!', sea ? '#c99bff' : ice ? '#7fd8ff' : '#ff8a4a');
   g.shake = Math.max(g.shake, 0.3);
 }
 function updateMonster(dt){
   const m = g.mon, p = g.p;
   m.t += dt;
-  if(m.attack === 'breath' && m.t >= 0.8 && !m.said){ m.said = true; toast('입김 공격! 앞이 안 보여요', '#fbf4e6'); }
+  if(m.attack === 'breath' && m.t >= 0.8 && !m.said){ m.said = true; toast(g.mapId === 'sea' ? '먹물 공격! 앞이 안 보여요' : '입김 공격! 앞이 안 보여요', '#fbf4e6'); }
   if(m.attack === 'spear'){
     const times = [1.0, 2.1, 3.2];
     if(m.thrown < times.length && m.t >= times[m.thrown]){
-      if(m.thrown === 0) toast(g.mapId === 'ice' ? '고드름 창이 날아와요!' : '창이 날아와요!', '#ff8a6b');
+      if(m.thrown === 0) toast(g.mapId === 'sea' ? '촉수가 내려쳐요!' : g.mapId === 'ice' ? '고드름 창이 날아와요!' : '창이 날아와요!', '#ff8a6b');
       m.thrown++;
       g.obs.push({ type:'spear', x:clamp(p.x + rnd(-0.35, 0.35), -RW + 0.2, RW - 0.2), y:6, z:rnd(9, 14), r:0.14, vy:-rnd(6, 7), landed:false });
     }
@@ -677,6 +682,7 @@ function updateMonster(dt){
 function monsterK(){ const m = g && g.mon; if(!m) return 0; return clamp(Math.min(m.t / 0.7, (MON_DUR - m.t) / 0.7), 0, 1); }
 function drawMonster(mapId){
   const m = g.mon, k = monsterK(); if(k <= 0) return;
+  if(mapId === 'sea'){ drawKraken(m, k); return; }
   const t = performance.now() / 1000, par = -camX * 18, ice = mapId === 'ice';
   const cx = W/2 + (ice ? par * 0.6 : par), clipY = ice ? HOR - 30 : HOR - 118;
   const S = 58, cy = clipY + S * 1.1 - k * S * 1.5 + Math.sin(t * 3) * 3;
@@ -726,7 +732,7 @@ function drawMonster(mapId){
 function drawBreathFog(mapId){
   const m = g.mon; if(!m || m.attack !== 'breath') return;
   const a = clamp(Math.min((m.t - 0.8) / 0.6, (MON_DUR - m.t) / 0.6), 0, 1); if(a <= 0) return;
-  const c = mapId === 'ice' ? '240,248,255' : '55,38,44';
+  const c = mapId === 'sea' ? '16,20,48' : mapId === 'ice' ? '240,248,255' : '55,38,44';
   const gr = ctx.createLinearGradient(0, HOR - 40, 0, H * 0.86);
   gr.addColorStop(0, `rgba(${c},${0.95 * a})`); gr.addColorStop(0.7, `rgba(${c},${0.9 * a})`); gr.addColorStop(1, `rgba(${c},${0.25 * a})`);
   ctx.fillStyle = gr; ctx.fillRect(0, HOR - 40, W, H * 0.86 - HOR + 40);
@@ -746,6 +752,7 @@ function spawnObstacle(){
     if(Math.random() < 0.55) g.obs.push({ type:'tiny', small:true, x:rnd(-RW + 0.2, RW - 0.2), y:FLY_H + 0.3, z, r:0.12 });
     return;
   }
+  if(g.mapId === 'sea'){ spawnSea(z, k); return; }
   if(g.t > 6 && g.t - g.lastRiver > 4 && Math.random() < 0.14){
     g.obs.push({ type:'river', x:0, z:z + 1, dep: g.mapId === 'volcano' ? 2.0 : 1.8 });
     g.lastRiver = g.t; g.justRiver = true; return;
@@ -757,6 +764,22 @@ function spawnObstacle(){
   } else {
     if(k < 0.55) g.obs.push({ type:'snow', x:rnd(-RW+0.3, RW-0.3), y:0, z, r:0.3, small:true, vx:rnd(-0.9, 0.9), spin:0 });
     else { const w = rnd(0.6, 1.0); g.obs.push({ type:'block', x:rnd(-RW + w/2, RW - w/2), z, w, h:0.5, dep:0.5 }); }
+  }
+}
+function spawnSea(z, k){
+  const deep = seaDeep(g.d + ZMAX), rx = () => rnd(-RW + 0.3, RW - 0.3);
+  if(!deep){   // 바다 위: 파도, 소용돌이, 바위
+    if(g.t > 6 && g.t - g.lastRiver > 4 && Math.random() < 0.14){
+      g.obs.push({ type:'wave', x:0, z:z + 1, dep:0.8, h:0.5 });
+      g.lastRiver = g.t; g.justRiver = true; return;
+    }
+    if(k < 0.3) g.obs.push({ type:'rock', x:rx(), y:0, z, r:0.26, small:true });
+    else if(k < 0.5) g.obs.push({ type:'rock', x:rx(), y:0, z, r:0.45, big:true });
+    else g.obs.push({ type:'whirl', x:rx(), z, r:0.42, spin:0 });
+  } else {     // 바닷속: 상어, 바위, 그물
+    if(k < 0.35) g.obs.push({ type:'shark', x:rx(), y:0, z, r:0.32, vx:(Math.random() < 0.5 ? -1 : 1) * rnd(1.2, 1.9) });
+    else if(k < 0.6) g.obs.push(Math.random() < 0.6 ? { type:'rock', x:rx(), y:0, z, r:0.26, small:true } : { type:'rock', x:rx(), y:0, z, r:0.45, big:true });
+    else { const w = rnd(0.9, 1.4); g.obs.push({ type:'net', x:rnd(-RW + w/2, RW - w/2), z, w, h:0.75, dep:0.25 }); }
   }
 }
 function spawnCoins(){
@@ -775,7 +798,9 @@ function hits(p, pr, o){
   const py = p.y;
   if(o.type === 'tiny') return Math.abs(o.z) < o.r + pr*0.6 && Math.abs(o.x - p.x) < o.r + pr && Math.abs(py + 0.3 - o.y) < o.r + 0.35;
   if(o.type === 'river') return py < 0.08 && Math.abs(o.z) < o.dep/2 - 0.15;
-  if(o.type === 'lava' || o.type === 'block'){
+  if(o.type === 'wave') return py < o.h * 0.85 && Math.abs(o.z) < o.dep/2 + 0.05;
+  if(o.type === 'whirl') return py < 0.1 && Math.hypot(o.x - p.x, o.z) < o.r + pr * 0.3;
+  if(o.type === 'lava' || o.type === 'block' || o.type === 'net'){
     if(py >= (o.type === 'lava' ? 0.08 : o.h)) return false;
     return Math.abs(o.z) < o.dep/2 + pr*0.5 && Math.abs(o.x - p.x) < o.w/2 + pr*0.7;
   }
@@ -808,7 +833,7 @@ function update(dt){
   g.t += dt;
   const ramp = Math.min(2.1, 1 + 0.012 * g.t);
   for(const k in g.fx) g.fx[k] = Math.max(0, g.fx[k] - dt);
-  g.speed = BASE_SPEED * C.speed * ramp * (g.fx.boost > 0 ? 1.8 : 1) * (g.fx.skate > 0 ? 1.3 : 1);   // 스케이트보드는 1.3배
+  g.speed = BASE_SPEED * C.speed * ramp * (g.fx.boost > 0 ? 1.8 : 1) * (g.fx.skate > 0 ? 1.3 : 1) * (g.slowT > 0 ? 0.5 : 1);   // 스케이트보드 1.3배, 그물 0.5배
   const step = g.speed * dt;
   g.d += step;
 
@@ -816,6 +841,7 @@ function update(dt){
   if(keys.left) ax -= 1;
   if(keys.right) ax += 1;
   if(pointer.down) ax = clamp((pointer.x - p.x) / 0.15, -1, 1);
+  if(g.flipT > 0) ax = -ax;   // 소용돌이: 좌우가 바뀜
   const maxV = 3.2 * C.steer;
   if(g.map.slip){
     p.vx += ax * maxV * 2.4 * dt;
@@ -828,6 +854,15 @@ function update(dt){
   if(p.x > lim){ p.x = lim; p.vx = 0; }
   p.inv -= dt;
   g.hurtT = Math.max(0, g.hurtT - dt);
+  g.flipT = Math.max(0, (g.flipT || 0) - dt); g.slowT = Math.max(0, (g.slowT || 0) - dt);
+  if(g.mapId === 'sea'){
+    const deep = seaDeep(g.d);
+    if(deep !== g.deep){
+      if(g.deep !== undefined){ toast(deep ? '🤿 바닷속으로 잠수!' : '🌊 바다 위로 올라왔어요!', '#7fd8ff'); g.zoneFlash = 1; }
+      g.deep = deep;
+    }
+    g.zoneFlash = Math.max(0, (g.zoneFlash || 0) - dt * 1.5);
+  }
   if(g.lostHeart){ g.lostHeart.t -= dt; if(g.lostHeart.t <= 0) g.lostHeart = null; }
   if(g.fx.glass > 0 && g.fx.glass < 3 && !g.glassWarned){ g.glassWarned = true; toast('👓 3초 남았어요!', '#ffc93c'); }
   if(g.fx.jet > 0){
@@ -840,7 +875,7 @@ function update(dt){
     if(g.fx.pogo > 0 && !p.air){ p.vy = 5.2; p.air = true; }
     if(g.fx.skate > 0 && !p.air){   // 강 앞 언덕에서 자동으로 날아오르기
       for(const o of g.obs){
-        if(o.type !== 'river') continue;
+        if(o.type !== 'river' && o.type !== 'wave') continue;
         const edge = o.z - o.dep / 2;
         if(edge > -0.1 && edge < 0.5){ p.vy = 6.5; p.air = true; toast('🛹 점프!', '#7fd8ff'); break; }
       }
@@ -878,20 +913,28 @@ function update(dt){
     }
     if(o.type === 'spear' && !o.landed){
       o.y += o.vy * dt;
-      if(o.y <= 0){ o.y = 0; o.landed = true; burst(o.x, 0.1, o.z, g.mapId === 'volcano' ? '#9c8b80' : '#ffffff', 8); g.shake = Math.max(g.shake, 0.1); }
+      if(o.y <= 0){ o.y = 0; o.landed = true; burst(o.x, 0.1, o.z, g.mapId === 'volcano' ? '#9c8b80' : g.mapId === 'sea' ? '#bfe9ff' : '#ffffff', 8); g.shake = Math.max(g.shake, 0.1); }
     }
     if(o.type === 'fire' && !o.landed){
       o.y += o.vy * dt;
       if(o.y <= o.r){ o.y = o.r; o.landed = true; burst(o.x, 0.2, o.z, '#ff9a2e', 8); }
     }
+    if(o.type === 'wave') o.z -= 2.5 * dt;   // 파도는 더 빨리 밀려와요
     if(o.vx){ o.x += o.vx * dt; if(o.x < -RW + o.r || o.x > RW - o.r) o.vx *= -1; }
     if(o.spin != null) o.spin += dt * 6;
     const safe = g.fx.glass > 0 || (o.type !== 'tiny' && (g.fx.jet > 0 || (g.fx.pogo > 0 && !((o.type === 'fire' || o.type === 'spear') && !o.landed))));
     if(!o.dead && !safe && hits(p, pr, o)){
+      if(o.type === 'whirl' || o.type === 'net'){   // 다치지는 않지만 방해해요
+        o.dead = true;
+        if(g.fx.shield > 0 || g.fx.boost > 0){ burst(o.x, 0.3, o.z, '#bfeeff', 10); continue; }
+        if(o.type === 'whirl'){ g.flipT = 3; toast('🌀 빙글빙글! 좌우가 바뀌었어요', '#7fd8ff'); }
+        else { g.slowT = 2; toast('🕸️ 그물에 걸렸어요!', '#e8dcb5'); }
+        continue;
+      }
       if(g.fx.shield > 0 || g.fx.boost > 0){
-        if(o.type !== 'lava' && o.type !== 'river'){ o.dead = true; burst(o.x, 0.3, o.z, g.fx.boost > 0 ? '#ffe27a' : '#7fd8ff', 12); }
+        if(o.type !== 'lava' && o.type !== 'river' && o.type !== 'wave'){ o.dead = true; burst(o.x, 0.3, o.z, g.fx.boost > 0 ? '#ffe27a' : '#7fd8ff', 12); }
       } else if(o.small && C.smash){
-        o.dead = true; burst(o.x, 0.3, o.z, o.type === 'snow' ? '#ffffff' : '#9c8b80', 14);
+        o.dead = true; burst(o.x, 0.3, o.z, o.type === 'snow' ? '#ffffff' : g.mapId === 'sea' ? '#8fa3b0' : '#9c8b80', 14);
         toast('쾅!', '#ffc93c'); g.shake = 0.15;
       } else if(p.inv <= 0){
         g.hp--; p.inv = 1.3; g.shake = 0.35; g.hurtT = 0.45; g.lostHeart = { i:g.hp, t:0.6 };
@@ -905,8 +948,8 @@ function update(dt){
       }
     }
   }
-  g.obs = g.obs.filter(o => !o.dead && o.z > (o.type === 'river' ? -o.dep : -0.9));
-  if(!g.riverHint && g.obs.some(o => o.type === 'river' && o.z < 13)){ g.riverHint = true; toast('⬆ 점프 준비!', '#ffc93c'); }
+  g.obs = g.obs.filter(o => !o.dead && o.z > (o.type === 'river' || o.type === 'wave' ? -o.dep : -0.9));
+  if(!g.riverHint && g.obs.some(o => (o.type === 'river' || o.type === 'wave') && o.z < 13)){ g.riverHint = true; toast('⬆ 점프 준비!', '#ffc93c'); }
 
   for(const c of g.coinList){
     c.z -= step; c.spin += dt * 5;
@@ -970,6 +1013,7 @@ function shadow(x, z, r, a){
 
 /* ===== 하늘과 산 ===== */
 function drawSky(mapId){
+  if(mapId === 'sea'){ drawSkySea(seaDeep(g ? g.d : attractD)); return; }
   const t = performance.now() / 1000;
   const par = -camX * 18;
   if(mapId === 'volcano'){
@@ -1023,15 +1067,111 @@ function drawSky(mapId){
 /* ===== 땅(길) ===== */
 function quadScreen(a, b, mapId){
   if(!a || !b) return;
-  ctx.fillStyle = mapId === 'volcano' ? '#3b1d14' : '#bfe5f6';
+  ctx.fillStyle = mapId === 'volcano' ? '#3b1d14' : mapId === 'sea' ? (seaDeep(g ? g.d : attractD) ? '#c9b27a' : '#3cc0dd') : '#bfe5f6';
   ctx.beginPath(); ctx.moveTo(W/2 - camX * 0, HOR); ctx.lineTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.closePath(); ctx.fill();
+}
+function drawSkySea(deep){
+  const t = performance.now() / 1000, par = -camX * 18;
+  if(!deep){
+    const gr = ctx.createLinearGradient(0, 0, 0, HOR);
+    gr.addColorStop(0, '#2f8fd8'); gr.addColorStop(1, '#c6ecff');
+    ctx.fillStyle = gr; ctx.fillRect(0, 0, W, HOR + 2);
+    ctx.save(); ctx.shadowColor = '#fff6c0'; ctx.shadowBlur = 30; ctx.fillStyle = '#fff8d8';
+    ctx.beginPath(); ctx.arc(W * 0.76 + par * 0.2, HOR - 125, 22, 0, 7); ctx.fill(); ctx.restore();
+    ctx.fillStyle = 'rgba(255,255,255,.85)';
+    for(let i = 0; i < 4; i++){
+      const x = ((i * 120 + t * 6) % (W + 160)) - 80 + par * 0.3, y = HOR - 150 + i * 28;
+      ctx.beginPath(); ctx.ellipse(x, y, 34, 10, 0, 0, 7); ctx.ellipse(x + 20, y - 6, 22, 9, 0, 0, 7); ctx.fill();
+    }
+    ctx.fillStyle = '#2d6b4a';   // 멀리 섬
+    for(const [ix, w, h] of [[-110, 70, 26], [125, 48, 18]]){
+      const x = W/2 + ix + par * 0.5;
+      ctx.beginPath(); ctx.ellipse(x, HOR, w, h, 0, Math.PI, 0); ctx.fill();
+    }
+    ctx.fillStyle = '#1a6aa6'; ctx.fillRect(0, HOR - 4, W, 6);
+  } else {
+    const gr = ctx.createLinearGradient(0, 0, 0, HOR);
+    gr.addColorStop(0, '#062242'); gr.addColorStop(1, '#155f95');
+    ctx.fillStyle = gr; ctx.fillRect(0, 0, W, HOR + 2);
+    for(let i = 0; i < 4; i++){   // 햇빛 줄기
+      const x = (i * 110 + 40 + Math.sin(t * 0.4 + i) * 20 + par * 0.2) % (W + 60);
+      ctx.fillStyle = 'rgba(180,230,255,.08)';
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + 30, 0); ctx.lineTo(x + 90, HOR); ctx.lineTo(x + 20, HOR); ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(8,30,60,.7)';   // 멀리 물고기 떼
+    for(let i = 0; i < 6; i++){
+      const x = ((t * 18 + i * 37) % (W + 80)) - 40, y = HOR - 70 + Math.sin(t + i) * 8 + (i % 3) * 10;
+      ctx.beginPath(); ctx.ellipse(x, y, 7, 3, 0, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(x - 6, y); ctx.lineTo(x - 11, y - 3); ctx.lineTo(x - 11, y + 3); ctx.fill();
+    }
+    ctx.strokeStyle = '#0b3d2c'; ctx.lineWidth = 4; ctx.lineCap = 'round';   // 해초 언덕
+    for(let i = 0; i < 9; i++){
+      const x = i * 45 + 10 + par * 0.4;
+      ctx.beginPath(); ctx.moveTo(x, HOR); ctx.quadraticCurveTo(x + Math.sin(t * 1.5 + i) * 8, HOR - 20, x + Math.sin(t + i) * 5, HOR - 34 - (i % 3) * 8); ctx.stroke();
+    }
+  }
+  if(g && g.mon) drawMonster('sea');
+}
+function drawKraken(m, k){
+  const t = performance.now() / 1000, par = -camX * 18;
+  const cx = W/2 + par * 0.6, clipY = HOR - 2, S = 52;
+  const cy = clipY + S * 1.2 - k * S * 1.6 + Math.sin(t * 2.5) * 4;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, 0, W, clipY); ctx.clip();
+  ctx.lineCap = 'round';
+  for(let i = 0; i < 6; i++){   // 촉수
+    const side = i < 3 ? -1 : 1, j = i % 3, wv = Math.sin(t * 2.2 + i) * 0.5;
+    const raised = m.attack === 'spear' && i === 4;
+    const x0 = cx + side * S * (0.5 + j * 0.25), y0 = cy + S * 0.7;
+    const x2 = cx + side * S * (1.4 + j * 0.45), y2 = raised ? cy - S * (1.6 + Math.sin(m.t * 5.5) * 0.4) : cy - S * (0.3 + j * 0.3) + wv * 20;
+    for(const [lw, col] of [[S * 0.24, '#5a2a82'], [S * 0.14, '#8a4fbf']]){
+      ctx.strokeStyle = col; ctx.lineWidth = lw;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.quadraticCurveTo(cx + side * S * (1.1 + j * 0.3), cy + S * 0.9 + wv * 15, x2, y2); ctx.stroke();
+    }
+  }
+  ctx.fillStyle = '#7a3fa8';
+  ctx.beginPath(); ctx.ellipse(cx, cy, S * 0.95, S * 1.05, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.12)'; ctx.beginPath(); ctx.ellipse(cx - S * 0.3, cy - S * 0.45, S * 0.3, S * 0.18, -0.4, 0, 7); ctx.fill();
+  ctx.fillStyle = '#c38be8';
+  for(const [dx, dy, r] of [[-0.45, -0.1, 0.1], [0.5, -0.35, 0.08], [0.2, 0.3, 0.07]]){ ctx.beginPath(); ctx.arc(cx + dx * S, cy + dy * S, r * S, 0, 7); ctx.fill(); }
+  ctx.save(); ctx.shadowColor = '#ffde3a'; ctx.shadowBlur = 14;
+  for(const sx of [-1, 1]){
+    ctx.fillStyle = '#ffe36b'; ctx.beginPath(); ctx.ellipse(cx + sx * S * 0.35, cy + S * 0.15, S * 0.2, S * 0.16, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = '#1a0a24'; ctx.beginPath(); ctx.ellipse(cx + sx * S * 0.35, cy + S * 0.15, S * 0.05, S * 0.13, 0, 0, 7); ctx.fill();
+  }
+  ctx.restore();
+  const open = m.attack === 'breath' && m.t > 0.6 && m.t < MON_DUR - 0.5;
+  ctx.fillStyle = '#2a0e3a'; ctx.beginPath(); ctx.ellipse(cx, cy + S * 0.55, S * 0.2, open ? S * 0.16 : S * 0.05, 0, 0, 7); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = 'rgba(255,255,255,.7)';   // 물보라
+  for(let i = 0; i < 8; i++){ const x = cx - S * 1.6 + i * S * 0.45, h = 3 + Math.abs(Math.sin(t * 5 + i)) * 7 * k; ctx.beginPath(); ctx.ellipse(x, clipY, S * 0.16, h, 0, Math.PI, 0); ctx.fill(); }
+  if(open){
+    for(let i = 0; i < 7; i++){
+      const f = ((t * 1.6 + i / 7) % 1);
+      ctx.fillStyle = `rgba(16,20,48,${0.6 * (1 - f)})`;
+      ctx.beginPath(); ctx.ellipse(cx + Math.sin(i * 2.1 + t) * 30 * f, cy + S * 0.6 + f * (H * 0.45), 20 + f * 130, 10 + f * 60, 0, 0, 7); ctx.fill();
+    }
+  }
+}
+function drawSeaOverlay(){
+  const t = performance.now() / 1000;
+  if(seaDeep(g.d)){
+    ctx.fillStyle = 'rgba(20,90,170,.14)'; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(220,245,255,.55)'; ctx.lineWidth = 1.5;
+    for(let i = 0; i < 14; i++){
+      const x = (i * 53.7 + Math.sin(t * 1.3 + i) * 12 + W) % W, y = H - ((t * 45 + i * 67) % (H + 40));
+      ctx.beginPath(); ctx.arc(x, y, 2 + (i % 3) * 2, 0, 7); ctx.stroke();
+    }
+  }
+  if(g.zoneFlash > 0){ ctx.fillStyle = `rgba(200,240,255,${g.zoneFlash * 0.6})`; ctx.fillRect(0, 0, W, H); }
 }
 function drawGround(mapId, dist){
   const t = performance.now() / 1000;
   const BAND = 1.5;
   const zNear = -CD + 0.5;
   const off = dist % BAND;
-  ctx.fillStyle = mapId === 'volcano' ? '#e0571f' : '#f4fbff'; ctx.fillRect(0, HOR, W, H - HOR);
+  const sea = mapId === 'sea', deep = sea && seaDeep(dist);
+  ctx.fillStyle = mapId === 'volcano' ? '#e0571f' : sea ? (deep ? '#0f4d7f' : '#1d7fc0') : '#f4fbff'; ctx.fillRect(0, HOR, W, H - HOR);
   { const fr = proj(-RW, 0, ZMAX), fl = proj(RW, 0, ZMAX); quadScreen(fr, fl, mapId); }
   const k0 = Math.floor((zNear + off) / BAND);
   const kN = Math.ceil((ZMAX + off) / BAND);
@@ -1048,6 +1188,15 @@ function drawGround(mapId, dist){
       side = `rgb(${230 + glow*25|0},${70 + glow*60|0},${20 + glow*20|0})`;
       road = even ? '#3b1d14' : '#47251a';
       curbA = '#1f0f0b'; curbB = '#5c3324';
+    } else if(sea && !deep){
+      const gl = 0.5 + 0.5 * Math.sin(t * 2 + idx * 0.7);
+      side = `rgb(${24 + gl * 10 | 0},${120 + gl * 16 | 0},${190 + gl * 14 | 0})`;
+      road = even ? '#43c6e0' : '#3ab8d6';
+      curbA = '#ffffff'; curbB = '#bfeefc';
+    } else if(sea){
+      side = even ? '#11558a' : '#0f4f80';
+      road = even ? '#cdb57d' : '#c2a970';
+      curbA = '#ff7a8a'; curbB = '#ffb36b';
     } else {
       side = even ? '#ffffff' : '#eef8fe';
       road = even ? '#bfe5f6' : '#cdeefb';
@@ -1057,8 +1206,20 @@ function drawGround(mapId, dist){
     quad(-RW, RW, zn, zf, road);
     quad(-RW - 0.18, -RW, zn, zf, even ? curbA : curbB);
     quad(RW, RW + 0.18, zn, zf, even ? curbA : curbB);
-    if(even){ quad(-0.53, -0.47, zn, zf, mapId === 'volcano' ? 'rgba(255,190,140,.35)' : 'rgba(80,150,200,.45)');
-              quad(0.47, 0.53, zn, zf, mapId === 'volcano' ? 'rgba(255,190,140,.35)' : 'rgba(80,150,200,.45)'); }
+    const lane = mapId === 'volcano' ? 'rgba(255,190,140,.35)' : sea ? (deep ? 'rgba(120,90,40,.3)' : 'rgba(255,255,255,.4)') : 'rgba(80,150,200,.45)';
+    if(even){ quad(-0.53, -0.47, zn, zf, lane); quad(0.47, 0.53, zn, zf, lane); }
+    if(sea && !deep && idx % 3 === 0){   // 물결 반짝임
+      ctx.fillStyle = 'rgba(255,255,255,.55)';
+      for(const sx of [-RW - 0.8, RW + 1.2, -RW - 2.2]){ const q = proj(sx + Math.sin(idx + t) * 0.3, 0, (zn + zf) / 2); if(q){ ctx.beginPath(); ctx.ellipse(q.x, q.y, 0.25 * q.s, 0.03 * q.s, 0, 0, 7); ctx.fill(); } }
+    }
+    if(deep && idx % 4 === 0){   // 해초
+      ctx.strokeStyle = '#1f7a4a'; ctx.lineCap = 'round';
+      for(const sx of [-RW - 0.7, RW + 0.7]){
+        const q = proj(sx, 0, (zn + zf) / 2); if(!q) continue;
+        const h = 0.8 * q.s; ctx.lineWidth = Math.max(2, 0.06 * q.s);
+        ctx.beginPath(); ctx.moveTo(q.x, q.y); ctx.quadraticCurveTo(q.x + Math.sin(t * 2 + idx) * h * 0.25, q.y - h * 0.5, q.x + Math.sin(t * 1.5 + idx) * h * 0.15, q.y - h); ctx.stroke();
+      }
+    }
     if(mapId === 'volcano' && idx % 5 === 0){
       ctx.fillStyle = 'rgba(255,240,170,.75)';
       for(const sx of [-RW - 0.9, RW + 0.9]){ const q = proj(sx + Math.sin(idx) * 0.3, 0, (zn + zf) / 2); if(q){ ctx.beginPath(); ctx.ellipse(q.x, q.y, 0.12*q.s, 0.04*q.s, 0, 0, 7); ctx.fill(); } }
@@ -1074,7 +1235,7 @@ function drawGround(mapId, dist){
   }
   // 멀리 안개
   const fog = ctx.createLinearGradient(0, HOR, 0, HOR + 36);
-  fog.addColorStop(0, mapId === 'volcano' ? 'rgba(120,40,30,.55)' : 'rgba(230,246,255,.8)');
+  fog.addColorStop(0, mapId === 'volcano' ? 'rgba(120,40,30,.55)' : sea ? (deep ? 'rgba(20,90,150,.8)' : 'rgba(190,235,255,.7)') : 'rgba(230,246,255,.8)');
   fog.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = fog; ctx.fillRect(0, HOR, W, 36);
 }
@@ -1145,12 +1306,56 @@ function drawObs2(o){
     }
     return;
   }
+  if(o.type === 'wave'){
+    const zf = o.z - o.dep/2, zb = o.z + o.dep/2, X = RW + 4, hh = o.h + Math.sin(t * 4) * 0.05;
+    const a = proj(-X, 0, zb), b = proj(X, 0, zb), c = proj(X, hh, o.z), d = proj(-X, hh, o.z), e = proj(X, 0, zf), f = proj(-X, 0, zf);
+    if(!a || !e) return;
+    poly([a, b, c, d], '#1f86c8');
+    poly([d, c, e, f], '#4fc3ee');
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(3, 0.08 * f.s); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(d.x, d.y); ctx.lineTo(c.x, c.y); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.8)';
+    for(let i = -6; i <= 6; i++){ const q = proj(i * 0.5, hh + 0.04, o.z); if(q){ ctx.beginPath(); ctx.arc(q.x, q.y - Math.abs(Math.sin(t * 6 + i)) * 0.06 * q.s, 0.06 * q.s, 0, 7); ctx.fill(); } }
+    return;
+  }
+  if(o.type === 'whirl'){
+    const q = proj(o.x, 0.01, o.z); if(!q) return;
+    const rx = o.r * q.s, ry = rx * 0.3;
+    ctx.fillStyle = 'rgba(10,60,110,.55)'; ctx.beginPath(); ctx.ellipse(q.x, q.y, rx, ry, 0, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = Math.max(1.5, 0.03 * q.s);
+    for(let i = 0; i < 3; i++){
+      ctx.beginPath(); ctx.ellipse(q.x, q.y, rx * (1 - i * 0.3), ry * (1 - i * 0.3), 0, o.spin + i, o.spin + i + 4.2); ctx.stroke();
+    }
+    return;
+  }
+  if(o.type === 'shark'){
+    shadow(o.x, o.z, 0.35, 0.25);
+    const q = proj(o.x, 0, o.z); if(!q) return;
+    const sz = 0.75 * q.s;
+    ctx.save(); ctx.translate(q.x, q.y - sz * 0.45 + Math.sin(t * 6 + o.x) * 0.03 * q.s); if(o.vx > 0) ctx.scale(-1, 1);
+    emoji('🦈', 0, 0, sz); ctx.restore();
+    return;
+  }
+  if(o.type === 'net'){
+    const x0 = o.x - o.w/2, x1 = o.x + o.w/2;
+    const a = proj(x0, 0, o.z), b = proj(x1, 0, o.z), c = proj(x1, o.h, o.z), d = proj(x0, o.h, o.z); if(!a || !c) return;
+    ctx.fillStyle = 'rgba(232,220,181,.15)'; poly([a, b, c, d], 'rgba(232,220,181,.15)');
+    ctx.strokeStyle = '#e8dcb5'; ctx.lineWidth = Math.max(1, 0.015 * a.s);
+    for(let i = 0; i <= 5; i++){ const y0 = a.y + (d.y - a.y) * i / 5, y1 = b.y + (c.y - b.y) * i / 5; ctx.beginPath(); ctx.moveTo(a.x, y0); ctx.lineTo(b.x, y1); ctx.stroke(); }
+    const n = Math.max(4, Math.round(o.w / 0.15));
+    for(let i = 0; i <= n; i++){ const x = a.x + (b.x - a.x) * i / n, y0 = a.y + (b.y - a.y) * i / n, y1 = d.y + (c.y - d.y) * i / n; ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke(); }
+    ctx.strokeStyle = '#8a6a3a'; ctx.lineWidth = Math.max(2, 0.05 * a.s);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(d.x, d.y); ctx.moveTo(b.x, b.y); ctx.lineTo(c.x, c.y); ctx.stroke();
+    return;
+  }
   if(o.type === 'rock'){
     shadow(o.x, o.z, o.r * 1.1);
     const q = proj(o.x, o.r, o.z); if(!q) return;
     const r = o.r * q.s;
-    ctx.fillStyle = '#5e4c44'; ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, 7); ctx.fill();
-    ctx.fillStyle = '#86716a'; ctx.beginPath(); ctx.arc(q.x - r*0.3, q.y - r*0.3, r * 0.45, 0, 7); ctx.fill();
+    const sea = g.mapId === 'sea';
+    ctx.fillStyle = sea ? '#5d6f7d' : '#5e4c44'; ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, 7); ctx.fill();
+    ctx.fillStyle = sea ? '#8496a3' : '#86716a'; ctx.beginPath(); ctx.arc(q.x - r*0.3, q.y - r*0.3, r * 0.45, 0, 7); ctx.fill();
+    if(sea && !seaDeep(g.d)){ ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = Math.max(1.5, r * 0.12); ctx.beginPath(); ctx.ellipse(q.x, q.y + r * 0.85, r * 1.15, r * 0.25, 0, 0, 7); ctx.stroke(); }
   } else if(o.type === 'lava'){
     const a = proj(o.x - o.w/2, 0.01, o.z - o.dep/2), b = proj(o.x + o.w/2, 0.01, o.z - o.dep/2);
     const c = proj(o.x + o.w/2, 0.01, o.z + o.dep/2), d = proj(o.x - o.w/2, 0.01, o.z + o.dep/2);
@@ -1173,7 +1378,15 @@ function drawObs2(o){
     shadow(o.x, o.z, 0.12, 0.35);
     const a = proj(o.x, o.y, o.z), b = proj(o.x, o.y + 0.9, o.z); if(!a || !b) return;
     const w = Math.max(2, 0.05 * a.s);
-    if(ice){
+    if(g.mapId === 'sea'){   // 크라켄 촉수
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#5a2a82'; ctx.lineWidth = w * 3.2;
+      ctx.beginPath(); ctx.moveTo(b.x + w * 2, b.y); ctx.quadraticCurveTo(a.x - w * 3, (a.y + b.y) / 2, a.x, a.y); ctx.stroke();
+      ctx.strokeStyle = '#8a4fbf'; ctx.lineWidth = w * 2;
+      ctx.beginPath(); ctx.moveTo(b.x + w * 2, b.y); ctx.quadraticCurveTo(a.x - w * 3, (a.y + b.y) / 2, a.x, a.y); ctx.stroke();
+      ctx.fillStyle = '#f0d6ff';
+      for(let i = 1; i < 5; i++){ const f = i / 5; ctx.beginPath(); ctx.arc(a.x + (b.x + w * 2 - a.x) * f - w * 1.2 * Math.sin(f * 3), a.y + (b.y - a.y) * f, w * 0.45, 0, 7); ctx.fill(); }
+    } else if(ice){
       ctx.fillStyle = '#bfeaff'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x - w * 1.6, b.y); ctx.lineTo(b.x + w * 1.6, b.y); ctx.closePath(); ctx.fill(); ctx.stroke();
     } else {
@@ -1245,6 +1458,7 @@ function drawRunner(e, x, z, size, bob, name){
   const px = size * q.s;
   ctx.globalAlpha = fogA(z);
   emoji(e, q.x, q.y - px * 0.5 + bob * q.s, px);
+  if(g && g.mapId === 'sea' && seaDeep(g.d)) emoji('🤿', q.x + px * 0.05, q.y - px * 0.62 + bob * q.s, px * 0.5);
   if(name){ ctx.font = `${Math.max(10, 0.2*q.s)|0}px Jua, sans-serif`; const tw = Math.max(10, 0.2*q.s) * name.length + 10;
     chip(q.x - tw/2, q.y - px - 0.28*q.s, tw, Math.max(14, 0.26*q.s)); text(name, q.x, q.y - px - 0.15*q.s, Math.max(10, 0.2*q.s)|0, '#fbf4e6', 'center'); }
   ctx.globalAlpha = 1;
@@ -1288,7 +1502,7 @@ function render(){
   }
 
   const items = [];
-  for(const o of g.obs) if(o.z - (o.dep || 0) / 2 < ZMAX + 1) items.push({ z: o.type === 'river' || o.type === 'lava' ? o.z + o.dep / 2 + 0.5 : o.z, f:() => drawObs(o) });
+  for(const o of g.obs) if(o.z - (o.dep || 0) / 2 < ZMAX + 1) items.push({ z: o.type === 'river' || o.type === 'lava' || o.type === 'wave' ? o.z + o.dep / 2 + 0.5 : o.type === 'whirl' ? o.z + o.r + 0.3 : o.z, f:() => drawObs(o) });
   for(const c of g.coinList) if(c.z < ZMAX) items.push({ z:c.z, f:() => drawCoin(c) });
   for(const r of g.rivals){
     const z = r.d - g.d;
@@ -1321,7 +1535,7 @@ function render(){
     if(p.inv > 0 && Math.floor(p.inv * 10) % 2 === 1) return;
     const q = proj(p.x, p.y, 0);
     shadow(p.x, 0, 0.26 * (1 - Math.min(p.y, 1.2) * 0.35), 0.28 - Math.min(p.y, 1) * 0.1);
-    const size = 0.62 * q.s, tilt = clamp(p.vx / 12, -0.3, 0.3);
+    const size = 0.62 * q.s, tilt = clamp(p.vx / 12, -0.3, 0.3) + (g.flipT > 0 ? g.t * 9 : 0);   // 소용돌이면 빙글빙글
     if(g.fx.skate > 0 && g.fx.jet <= 0 && g.fx.pogo <= 0){   // 스케이트보드
       const bw = size * 0.55, by = q.y + size * 0.02;
       ctx.fillStyle = '#ff5b8a'; roundRect(q.x - bw, by - size * 0.06, bw * 2, size * 0.1, size * 0.05); ctx.fill();
@@ -1349,6 +1563,8 @@ function render(){
     ctx.save(); ctx.translate(q.x, q.y - size * 0.5 - (p.air ? 0 : Math.abs(Math.sin(g.t * 11)) * 0.07 * q.s)); ctx.rotate(tilt);
     emoji(C.e, 0, 0, size);
     if(g.fx.glass > 0) emoji('👓', 0, -size * 0.62, size * 0.42);
+    if(g.mapId === 'sea' && seaDeep(g.d)) emoji('🤿', size * 0.05, -size * 0.12, size * 0.5);   // 바닷속 잠수 장비
+    if(g.slowT > 0) emoji('🕸️', 0, 0, size * 1.1);
     ctx.restore();
     const cy = q.y - size * 0.5, now = performance.now() / 1000;
     if(g.fx.shield > 0 && (g.fx.shield > 1.2 || Math.floor(now * 8) % 2 === 0)){
@@ -1386,6 +1602,7 @@ function render(){
       ctx.lineTo(cx + Math.cos(a) * (240 + len), cy + Math.sin(a) * (240 + len) * 1.4); ctx.stroke();
     }
   }
+  if(g.mapId === 'sea') drawSeaOverlay();
   drawBreathFog(g.mapId);
   ctx.restore();
 
