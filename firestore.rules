@@ -57,6 +57,27 @@ service cloud.firestore {
       }
     }
 
+    // 부모님 잠금 설정
+    match /settings/lock {
+      allow read: if true;
+      allow create, update: if request.resource.data.keys().hasOnly(['pinHash', 'pcOpenUntil'])
+        && (!('pinHash' in request.resource.data) || (request.resource.data.pinHash is string && request.resource.data.pinHash.size() == 64))
+        && (!('pcOpenUntil' in request.resource.data) || request.resource.data.pcOpenUntil is number);
+      allow delete: if false;
+    }
+
+    // 플레이 기록
+    match /plays/{id} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasOnly(['p', 'at', 'dev', 'map', 'ch', 'dist', 'mode'])
+        && request.resource.data.p in ['n1', 'n2', 'n3', 'n4']
+        && request.resource.data.dev in ['pc', 'phone']
+        && request.resource.data.at is number && request.resource.data.dist is number;
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dist'])
+        && request.resource.data.dist is number;
+      allow delete: if false;
+    }
+
     // 그 밖의 모든 것은 막음
     match /{document=**} {
       allow read, write: if false;
