@@ -232,7 +232,7 @@ section{width:100%}
     <div id="shop" class="screen" hidden>
       <p class="tag rec">🛒 상점</p>
       <p class="bank" id="shopWallet"></p>
-      <p class="sub">미리 사 두면 달리다가 코인이 없어도 쓸 수 있어요. 대신 달리는 중에 사는 것보다 비싸요.</p>
+      <p class="sub">미리 사 두면 달리다가 코인이 없어도 쓸 수 있어요. 대신 달리는 중에 사는 것보다 비싸고, 가족 대결에서는 쓸 수 없어요.</p>
       <div class="shoplist" id="shopList"></div>
       <button class="go" id="shopClose">다 골랐어요</button>
     </div>
@@ -274,10 +274,10 @@ const BASE_SPEED = 6.25;   // 초당 m
 const ITEMS = [
   { id:'shield', e:'🛡️', name:'방패',   price:10, shop:15, dur:5,  desc:'5초 동안 부딪혀도 괜찮아요' },
   { id:'magnet', e:'🧲', name:'자석',   price:8,  shop:12, dur:8,  desc:'8초 동안 코인이 끌려와요' },
-  { id:'boost',  e:'⚡', name:'부스터', price:15, shop:23, dur:3,  desc:'3초 동안 아주 빠르게 달려요' },
+  { id:'boost',  e:'⚡', name:'부스터', price:15, shop:23, dur:5,  desc:'5초 동안 아주 빠르게 달려요' },
   { id:'heart',  e:'❤️', name:'하트',   price:20, shop:30, dur:0,  desc:'하트 1개를 채워요' },
   { id:'jet',    e:'🚀', name:'제트팩', price:30, shop:45, dur:30, desc:'30초 동안 날아요. 아주 작은 장애물만 나와요' },
-  { id:'pogo',   e:'🦘', name:'콩콩',   price:25, shop:35, dur:30, desc:'스카이 콩콩! 30초 동안 낮은 장애물을 피해요' },
+  { id:'pogo',   e:'🦘', name:'콩콩',   price:25, shop:35, dur:15, desc:'스카이 콩콩! 15초 동안 낮은 장애물을 피해요' },
   { id:'glass',  e:'👓', name:'투명 사물 안경', short:'안경', price:50, shop:60, dur:20, desc:'20초 동안 사물이 반투명해지고 다치지 않아요' },
   { id:'skate',  e:'🛹', name:'스케이트보드', short:'보드', price:20, shop:30, dur:30, desc:'30초 동안 더 빠르게! 강 앞에 언덕이 생겨 날아 넘어요' }
 ];
@@ -663,16 +663,17 @@ function buildItems(){
   });
   g.barKey = '';
 }
+function usableOwned(id){ return g && g.duel ? 0 : owned(id); }   // 가족 대결에서는 상점 아이템을 못 써요
 function canBuy(it){
   if(it.id === 'heart' && g.hp >= g.C.hp) return false;
-  return owned(it.id) > 0 || g.coins >= price(it);
+  return usableOwned(it.id) > 0 || g.coins >= price(it);
 }
 function useItem(i){
   if(mode !== 'play' || !g) return;
   audio();
   const it = ITEMS[i]; if(!it) return;
   if(it.id === 'heart' && g.hp >= g.C.hp){ toast('체력이 가득해요', '#b9adc9'); return; }
-  if(owned(it.id) > 0) addOwned(it.id, -1);       // 상점에서 사 둔 것부터 써요
+  if(usableOwned(it.id) > 0) addOwned(it.id, -1);       // 상점에서 사 둔 것부터 써요 (가족 대결에서는 못 써요)
   else {
     const cost = price(it);
     if(g.coins < cost){ toast(`코인 ${cost - g.coins}개 더 필요해요`, '#b9adc9'); return; }
@@ -706,13 +707,13 @@ function openBox(o){
   toast(`🎁 ${it.e} ${it.name}!`, '#ffc93c'); sfx('box');
 }
 function syncItems(){
-  const key = ITEMS.map(it => [canBuy(it) ? 1 : 0, price(it), owned(it.id), it.dur ? Math.ceil(g.fx[it.id] * (it.dur > 20 ? 2 : 10)) : 0].join(':')).join('|');
+  const key = ITEMS.map(it => [canBuy(it) ? 1 : 0, price(it), usableOwned(it.id), it.dur ? Math.ceil(g.fx[it.id] * (it.dur > 20 ? 2 : 10)) : 0].join(':')).join('|');
   if(key === g.barKey) return; g.barKey = key;
   for(const it of ITEMS){
     const b = document.getElementById('item-' + it.id); if(!b) continue;
     const ok = canBuy(it), on = it.dur && g.fx[it.id] > 0;
     b.disabled = !ok && !on; b.classList.toggle('ready', ok); b.classList.toggle('on', !!on);
-    const n = owned(it.id); b.classList.toggle('own', n > 0);
+    const n = usableOwned(it.id); b.classList.toggle('own', n > 0);
     b.querySelector('.ip').textContent = n > 0 ? '×' + n : '🪙' + price(it);
     b.querySelector('.bar').style.width = on ? (g.fx[it.id] / it.dur * 100) + '%' : '0';
   }
